@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Secure QR Login</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,sans-serif;color-scheme:light dark}
+    body{margin:0;padding:24px;background:transparent}.wrap{max-width:720px;margin:auto}.card{background:#1c1c1c;border-radius:16px;padding:24px;margin-bottom:16px}
+    h1,h2{margin-top:0}.status{font-size:34px;font-weight:700}.muted{color:#aaa}button,a.button{border:0;border-radius:10px;padding:12px 18px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}.on{background:#03a9f4;color:#fff}.off{background:#444;color:#fff}.danger{color:#ff6b6b}.audit{font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Secure QR Login</h1>
+      <div id="status" class="status">—</div>
+      <p id="countdown" class="muted"></p>
+      <button id="enable" class="on">Enable for 3 minutes</button>
+      <button id="disable" class="off">Disable now</button>
+      <a class="button off" href="/secure_qr_login/start" target="_blank">Open login screen</a>
+    </div>
+    <div class="card"><h2>Recent security events</h2><div id="audit" class="audit muted">—</div></div>
+  </div>
+  <script src="/secure_qr_login/static/admin.js"></script>
+</body>
+</html>
