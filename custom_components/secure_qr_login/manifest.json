@@ -1,0 +1,21 @@
+{
+  "domain": "secure_qr_login",
+  "name": "Secure QR Login",
+  "version": "1.0.0",
+  "config_flow": true,
+  "documentation": "https://github.com/dkouskousis/secure-qr-login",
+  "issue_tracker": "https://github.com/dkouskousis/secure-qr-login/issues",
+  "dependencies": [
+    "http",
+    "frontend"
+  ],
+  "codeowners": [
+    "@dkouskousis"
+  ],
+  "requirements": [
+    "segno==1.6.6"
+  ],
+  "iot_class": "local_push",
+  "integration_type": "service",
+  "single_config_entry": true
+}
