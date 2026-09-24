@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Secure QR Login",
+        "description": "Install Secure QR Login. The feature remains disabled until you enable its temporary three-minute window."
+      }
+    },
+    "abort": {
+      "already_configured": "Secure QR Login is already configured."
+    }
+  }
+}
