@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Approve Secure QR Login</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,sans-serif;color-scheme:light dark}
+    body{margin:0;min-height:100vh;display:grid;place-items:center;background:#111;padding:20px}
+    .card{width:min(440px,100%);background:#1c1c1c;border-radius:16px;padding:28px;box-sizing:border-box}
+    h1{margin-top:0}.muted{color:#aaa}.row{display:flex;justify-content:space-between;gap:16px;padding:10px 0;border-bottom:1px solid #333}.value{text-align:right;word-break:break-word}
+    .buttons{display:flex;gap:12px;margin-top:24px}button,a.button{flex:1;border:0;border-radius:10px;padding:13px;text-align:center;text-decoration:none;font-weight:600;cursor:pointer}.approve{background:#03a9f4;color:#fff}.deny{background:#333;color:#fff}.error{color:#ff6b6b}.ok{color:#68d391}
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Approve login</h1>
+    <p class="muted">Confirm that this is the device currently showing the QR code.</p>
+    <section id="details" hidden>
+      <div class="row"><span>Account</span><span id="account" class="value"></span></div>
+      <div class="row"><span>IP</span><span id="ip" class="value"></span></div>
+      <div class="row"><span>Browser</span><span id="agent" class="value"></span></div>
+      <div class="buttons"><button id="approve" class="approve">Approve</button><button id="deny" class="deny">Deny</button></div>
+    </section>
+    <p id="message" class="muted">Checking authentication…</p>
+  </main>
+  <script src="/secure_qr_login/static/approve.js"></script>
+</body>
+</html>
