@@ -195,9 +195,9 @@
     );
 
     const geo = d.geoip || {};
-    document.getElementById('geoStatus').textContent = geo.header_present
-      ? `Cloudflare GeoIP detected on this request: ${geo.current_country || 'unknown'}.`
-      : 'Cloudflare GeoIP header is not present on this admin request. Enable IP Geolocation / visitor location headers in Cloudflare before enabling a country allowlist.';
+    document.getElementById('geoStatus').textContent = geo.ready
+      ? `Cloudflare GeoIP is ready. Current request country: ${geo.current_country || 'unknown'}.`
+      : 'Complete Cloudflare GeoIP headers are not present on this admin request. Enable IP Geolocation / visitor location headers in Cloudflare before enabling a country allowlist.';
   }
 
   async function saveSettings() {
