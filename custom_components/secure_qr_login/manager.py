@@ -42,6 +42,7 @@ from .const import (
     MIN_HISTORY_LIMIT,
     MIN_MAX_PENDING_SESSIONS,
     MIN_QR_LIFETIME_SECONDS,
+    ISO_COUNTRY_CODES,
 )
 from .models import ActiveLogin, AuditEntry, LoginSession
 from .notifications import async_send_security_notification
@@ -189,9 +190,7 @@ class SecureQrLoginManager:
             str(item).upper()
             for item in raw
             if isinstance(item, str)
-            and len(item) == 2
-            and item.isalpha()
-            and item.upper() not in {"XX"}
+            and item.upper() in ISO_COUNTRY_CODES
         }
 
     @property
