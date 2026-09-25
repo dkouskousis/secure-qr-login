@@ -7,6 +7,7 @@
   const historyEmpty = document.getElementById('historyEmpty');
   const revokeAllButton = document.getElementById('revokeAll');
   const clearHistoryButton = document.getElementById('clearHistory');
+  const saveSettingsButton = document.getElementById('saveSettings');
 
   let token = null;
   let enabled = false;
@@ -28,6 +29,9 @@
     return td;
   };
 
+  const selectedValues = (select) =>
+    Array.from(select.selectedOptions).map(option => option.value);
+
   function renderCountdown() {
     if (!enabled) {
       countdown.textContent = 'Off by default. No new QR sessions can be created.';
@@ -36,10 +40,8 @@
 
     const elapsed = Math.floor((performance.now() - lastSyncedAt) / 1000);
     const left = Math.max(0, remainingSeconds - elapsed);
-    const minutes = Math.floor(left / 60);
-    const seconds = left % 60;
-
-    countdown.textContent = `${minutes}:${String(seconds).padStart(2, '0')} remaining`;
+    countdown.textContent =
+      `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} remaining`;
 
     if (left === 0) {
       enabled = false;
@@ -59,11 +61,7 @@
         textCell(item.user_name),
         textCell(item.client_ip),
         textCell(item.user_agent, 'agent'),
-        textCell(
-          item.delivered_at
-            ? new Date(item.delivered_at * 1000).toLocaleString()
-            : '—'
-        )
+        textCell(item.delivered_at ? new Date(item.delivered_at * 1000).toLocaleString() : '—')
       );
 
       const action = document.createElement('td');
@@ -71,9 +69,7 @@
       button.className = 'revoke';
       button.textContent = 'Revoke';
       button.addEventListener('click', async () => {
-        if (!confirm(`Revoke QR login for ${item.user_name || 'this account'}?`)) {
-          return;
-        }
+        if (!confirm(`Revoke QR login for ${item.user_name || 'this account'}?`)) return;
         button.disabled = true;
         await revoke(item.login_id);
       });
@@ -127,13 +123,102 @@
     document.getElementById('rotation').textContent = `${d.qr_lifetime_seconds}s`;
     document.getElementById('pending').textContent =
       `${d.pending_sessions} / ${d.max_pending_sessions}`;
-    document.getElementById('activeCount').textContent =
-      String((d.active || []).length);
+    document.getElementById('activeCount').textContent = String((d.active || []).length);
     document.getElementById('version').textContent = d.version || '—';
     document.getElementById('build').textContent = d.build || '—';
 
     renderActive(d.active || []);
     renderHistory(d.history || []);
+  }
+
+  function fillSelect(select, items, selected, labelKey = null) {
+    select.replaceChildren();
+    const chosen = new Set(selected || []);
+
+    for (const item of items) {
+      const option = document.createElement('option');
+      if (typeof item === 'string') {
+        option.value = item;
+        option.textContent = `notify.${item}`;
+      } else {
+        option.value = item.id;
+        option.textContent = labelKey ? item[labelKey] : item.name;
+      }
+      option.selected = chosen.has(option.value);
+      select.append(option);
+    }
+  }
+
+  async function loadSettings() {
+    const r = await fetch('/api/secure_qr_login/admin/settings', {
+      headers: headers(),
+      cache: 'no-store'
+    });
+    if (!r.ok) return;
+
+    const d = await r.json();
+    const v = d.values;
+
+    document.getElementById('settingWindow').value = v.enable_window_seconds;
+    document.getElementById('settingQr').value = v.qr_lifetime_seconds;
+    document.getElementById('settingPending').value = v.max_pending_sessions;
+    document.getElementById('settingHistory').value = v.history_limit;
+    document.getElementById('settingNotifyApproved').checked = v.notify_on_approved;
+    document.getElementById('settingNotifyDenied').checked = v.notify_on_denied;
+    document.getElementById('settingCountries').value = (v.allowed_countries || []).join(', ');
+    document.getElementById('settingPrivate').checked = v.allow_private_networks;
+
+    fillSelect(document.getElementById('settingUsers'), d.users || [], v.allowed_user_ids || []);
+    fillSelect(document.getElementById('settingNotify'), d.notify_services || [], v.notify_services || []);
+
+    const geo = d.geoip || {};
+    document.getElementById('geoStatus').textContent = geo.header_present
+      ? `Cloudflare GeoIP detected on this request: ${geo.current_country || 'unknown'}.`
+      : 'Cloudflare GeoIP header is not present on this admin request. Enable IP Geolocation / visitor location headers in Cloudflare before enabling a country allowlist.';
+  }
+
+  async function saveSettings() {
+    const message = document.getElementById('settingsMessage');
+    const countries = document.getElementById('settingCountries').value
+      .split(',')
+      .map(value => value.trim().toUpperCase())
+      .filter(Boolean);
+
+    const payload = {
+      enable_window_seconds: Number(document.getElementById('settingWindow').value),
+      qr_lifetime_seconds: Number(document.getElementById('settingQr').value),
+      max_pending_sessions: Number(document.getElementById('settingPending').value),
+      history_limit: Number(document.getElementById('settingHistory').value),
+      allowed_user_ids: selectedValues(document.getElementById('settingUsers')),
+      notify_services: selectedValues(document.getElementById('settingNotify')),
+      notify_on_approved: document.getElementById('settingNotifyApproved').checked,
+      notify_on_denied: document.getElementById('settingNotifyDenied').checked,
+      allowed_countries: countries,
+      allow_private_networks: document.getElementById('settingPrivate').checked
+    };
+
+    saveSettingsButton.disabled = true;
+    message.className = 'notice muted';
+    message.textContent = 'Saving…';
+
+    const r = await fetch('/api/secure_qr_login/admin/settings', {
+      method: 'POST',
+      headers: headers({'Content-Type': 'application/json'}),
+      body: JSON.stringify(payload),
+      cache: 'no-store'
+    });
+
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      message.className = 'notice error';
+      message.textContent = `Unable to save settings: ${data.error || 'unknown error'}.`;
+    } else {
+      message.className = 'notice ok';
+      message.textContent = 'Settings saved.';
+      await Promise.all([state(), loadSettings()]);
+    }
+
+    saveSettingsButton.disabled = false;
   }
 
   async function setEnabled(value) {
@@ -153,19 +238,12 @@
       body: JSON.stringify({login_id: loginId}),
       cache: 'no-store'
     });
-
-    if (!r.ok) {
-      alert('Unable to revoke this login. It may already have been revoked.');
-    }
+    if (!r.ok) alert('Unable to revoke this login. It may already have been revoked.');
     await state();
   }
 
   async function revokeAll() {
-    if (!confirm(
-      'Revoke every QR-created login? This also closes the current QR login window and cancels pending requests.'
-    )) {
-      return;
-    }
+    if (!confirm('Revoke every QR-created login? This also closes the current QR login window and cancels pending requests.')) return;
 
     revokeAllButton.disabled = true;
     const r = await fetch('/api/secure_qr_login/admin/revoke-all', {
@@ -174,17 +252,12 @@
       body: '{}',
       cache: 'no-store'
     });
-
-    if (!r.ok) {
-      alert('Unable to revoke all QR logins.');
-    }
+    if (!r.ok) alert('Unable to revoke all QR logins.');
     await state();
   }
 
   async function clearHistory() {
-    if (!confirm('Clear the Secure QR Login security history? Active logins will not be changed.')) {
-      return;
-    }
+    if (!confirm('Clear the Secure QR Login security history? Active logins will not be changed.')) return;
 
     clearHistoryButton.disabled = true;
     const r = await fetch('/api/secure_qr_login/admin/clear-history', {
@@ -193,10 +266,7 @@
       body: '{}',
       cache: 'no-store'
     });
-
-    if (!r.ok) {
-      alert('Unable to clear history.');
-    }
+    if (!r.ok) alert('Unable to clear history.');
     await state();
   }
 
@@ -204,8 +274,10 @@
   document.getElementById('disable').addEventListener('click', () => setEnabled(false));
   revokeAllButton.addEventListener('click', revokeAll);
   clearHistoryButton.addEventListener('click', clearHistory);
+  saveSettingsButton.addEventListener('click', saveSettings);
 
   state();
+  loadSettings();
   setInterval(renderCountdown, 250);
   setInterval(state, 5000);
 })();
