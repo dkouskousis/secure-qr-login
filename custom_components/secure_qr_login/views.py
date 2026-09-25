@@ -67,6 +67,7 @@ from .const import (
     STATUS_LIMIT_WINDOW_SECONDS,
     VERSION,
 )
+from .geoip import is_nabu_casa_request
 from .models import AuditEntry, LoginSession
 from .rate_limit import FixedWindowLimiter
 from .security import (
@@ -129,9 +130,13 @@ def _reject_cross_origin(view: HomeAssistantView, request: web.Request):
     return _json(view, {"error": "origin_rejected"}, 403)
 
 
-def _reject_country(view: HomeAssistantView, request: web.Request, manager):
+async def _reject_country(
+    view: HomeAssistantView,
+    request: web.Request,
+    manager,
+):
     """Enforce the optional country allowlist on the requesting browser."""
-    allowed, country, reason = manager.country_allowed(request)
+    allowed, country, reason = await manager.async_country_allowed(request)
     if allowed:
         return None
 
@@ -215,7 +220,7 @@ class StartView(HomeAssistantView):
         manager = _manager(request)
         if manager is None or not manager.enabled:
             return _json(self, {"error": "disabled"}, 503)
-        if rejected := _reject_country(self, request, manager):
+        if rejected := await _reject_country(self, request, manager):
             return rejected
 
         ip = _client_ip(request)
@@ -273,7 +278,7 @@ class QrView(HomeAssistantView):
         manager = _manager(request)
         if manager is None or not manager.enabled:
             return _json(self, {"error": "disabled"}, 503)
-        if rejected := _reject_country(self, request, manager):
+        if rejected := await _reject_country(self, request, manager):
             return rejected
 
         payload = await _json_body(request)
@@ -343,7 +348,7 @@ class StatusView(HomeAssistantView):
         manager = _manager(request)
         if manager is None or not manager.enabled:
             return _json(self, {"error": "disabled"}, 503)
-        if rejected := _reject_country(self, request, manager):
+        if rejected := await _reject_country(self, request, manager):
             return rejected
 
         payload = await _json_body(request)
@@ -585,7 +590,13 @@ class AdminSettingsView(HomeAssistantView):
         cf_country = (request.headers.get("CF-IPCountry") or "").upper().strip()
         cf_ray_present = bool(request.headers.get("CF-Ray"))
         cf_connecting_ip_present = bool(request.headers.get("CF-Connecting-IP"))
-        geoip_ready = bool(cf_country) and cf_ray_present and cf_connecting_ip_present
+        cloudflare_ready = (
+            bool(cf_country)
+            and cf_ray_present
+            and cf_connecting_ip_present
+        )
+        nabu_request = is_nabu_casa_request()
+        local_result = await manager.geoip.async_lookup_ip(request.remote)
         return _json(
             self,
             {
@@ -605,12 +616,23 @@ class AdminSettingsView(HomeAssistantView):
                 "notify_services": notify_options,
                 "country_codes": sorted(ISO_COUNTRY_CODES),
                 "geoip": {
-                    "source": "Cloudflare CF-IPCountry",
-                    "ready": geoip_ready,
-                    "current_country": cf_country or None,
-                    "cf_ipcountry_present": bool(cf_country),
-                    "cf_ray_present": cf_ray_present,
-                    "cf_connecting_ip_present": cf_connecting_ip_present,
+                    "provider": (
+                        "cloudflare"
+                        if cloudflare_ready
+                        else "nabu_casa"
+                        if nabu_request
+                        else "local_ip"
+                    ),
+                    "cloudflare_ready": cloudflare_ready,
+                    "nabu_casa_request": nabu_request,
+                    "client_ip_available": local_result.client_ip is not None,
+                    "current_country": (
+                        cf_country
+                        if cloudflare_ready
+                        else local_result.country_code
+                    ),
+                    "local_database_ready": manager.geoip.database_ready,
+                    "local_database_source": manager.geoip.source_info,
                 },
             },
         )
