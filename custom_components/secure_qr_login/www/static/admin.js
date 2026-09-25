@@ -10,18 +10,207 @@
   const saveSettingsButton = document.getElementById('saveSettings');
   const geoUpdateButton = document.getElementById('geoUpdate');
 
-  let token = null;
+  let accessToken = null;
+  let refreshToken = null;
+  let clientId = null;
+  let externalAuthResolve = null;
   let enabled = false;
   let remainingSeconds = 0;
   let lastSyncedAt = performance.now();
 
-  try {
-    token = JSON.parse(localStorage.getItem('hassTokens'))?.access_token || null;
-  } catch {}
+  const clientIdDefault = location.origin + '/';
 
-  const headers = (extra = {}) => token
-    ? {...extra, Authorization: `Bearer ${token}`}
-    : extra;
+  function candidateWindows() {
+    const windows = [window];
+    try {
+      if (window.parent && window.parent !== window) windows.push(window.parent);
+    } catch {}
+    try {
+      if (window.top && !windows.includes(window.top)) windows.push(window.top);
+    } catch {}
+    return windows;
+  }
+
+  function browserTokens() {
+    for (const target of candidateWindows()) {
+      try {
+        const memory = target.__tokenCache?.tokens;
+        if (memory?.access_token) return memory;
+      } catch {}
+
+      try {
+        const raw = target.localStorage?.getItem('hassTokens');
+        if (raw) {
+          const stored = JSON.parse(raw);
+          if (stored?.access_token) return stored;
+        }
+      } catch {}
+    }
+    return null;
+  }
+
+  function companionBridgeWindow() {
+    for (const target of candidateWindows()) {
+      try {
+        if (
+          target.externalAppV2
+          || target.externalApp
+          || target.webkit?.messageHandlers?.getExternalAuth
+        ) {
+          return target;
+        }
+      } catch {}
+    }
+    return null;
+  }
+
+  function companionBridgeAvailable() {
+    return companionBridgeWindow() !== null;
+  }
+
+  function installExternalAuthCallback() {
+    const callback = (success, data) => {
+      if (externalAuthResolve) {
+        externalAuthResolve(Boolean(success), data || null);
+      }
+    };
+
+    for (const target of candidateWindows()) {
+      try {
+        target.externalAuthSetToken = callback;
+      } catch {}
+    }
+  }
+
+  function requestExternalAuth(force = false) {
+    const bridge = companionBridgeWindow();
+    if (!bridge) return Promise.resolve(false);
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const timeout = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          externalAuthResolve = null;
+          resolve(false);
+        }
+      }, 5000);
+
+      externalAuthResolve = (success, data) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        externalAuthResolve = null;
+
+        if (success && data?.access_token) {
+          accessToken = data.access_token;
+          refreshToken = null;
+          clientId = null;
+          resolve(true);
+        } else {
+          resolve(false);
+        }
+      };
+
+      const payload = {callback: 'externalAuthSetToken', force};
+
+      try {
+        if (bridge.externalAppV2) {
+          bridge.externalAppV2.postMessage(JSON.stringify({
+            type: 'getExternalAuth',
+            payload
+          }));
+          return;
+        }
+
+        if (bridge.externalApp) {
+          bridge.externalApp.getExternalAuth(JSON.stringify(payload));
+          return;
+        }
+
+        bridge.webkit.messageHandlers.getExternalAuth.postMessage(payload);
+      } catch {
+        clearTimeout(timeout);
+        externalAuthResolve = null;
+        resolve(false);
+      }
+    });
+  }
+
+  function adoptBrowserTokens() {
+    const stored = browserTokens();
+    if (!stored) return false;
+
+    accessToken = stored.access_token || null;
+    refreshToken = stored.refresh_token || null;
+    clientId = stored.clientId || clientIdDefault;
+    return Boolean(accessToken);
+  }
+
+  async function refreshAccess() {
+    if (companionBridgeAvailable() && await requestExternalAuth(true)) {
+      return true;
+    }
+
+    if (!refreshToken || !clientId) return false;
+
+    const body = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: clientId
+    });
+
+    const r = await fetch('/auth/token', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: body.toString(),
+      cache: 'no-store'
+    });
+
+    if (!r.ok) return false;
+
+    const data = await r.json();
+    accessToken = data.access_token || null;
+    refreshToken = data.refresh_token || refreshToken;
+    return Boolean(accessToken);
+  }
+
+  async function ensureAuthentication() {
+    installExternalAuthCallback();
+
+    if (adoptBrowserTokens()) return true;
+
+    if (companionBridgeAvailable() && await requestExternalAuth(false)) {
+      return true;
+    }
+
+    return adoptBrowserTokens();
+  }
+
+  function authHeaders(extra = {}) {
+    return accessToken
+      ? {...extra, Authorization: `Bearer ${accessToken}`}
+      : {...extra};
+  }
+
+  async function request(url, options = {}) {
+    const baseHeaders = {...(options.headers || {})};
+    const requestOptions = {
+      ...options,
+      cache: 'no-store',
+      headers: authHeaders(baseHeaders)
+    };
+
+    let response = await fetch(url, requestOptions);
+    if (response.status === 401 && await refreshAccess()) {
+      response = await fetch(url, {
+        ...options,
+        cache: 'no-store',
+        headers: authHeaders(baseHeaders)
+      });
+    }
+    return response;
+  }
 
   const textCell = (value, className = '') => {
     const td = document.createElement('td');
@@ -32,6 +221,14 @@
 
   const selectedValues = (select) =>
     Array.from(select.selectedOptions).map(option => option.value);
+
+  function showAuthenticationError() {
+    enabled = false;
+    status.textContent = 'Authentication required';
+    status.className = 'status danger';
+    countdown.textContent =
+      'The admin panel could not authenticate with Home Assistant.';
+  }
 
   function renderCountdown() {
     if (!enabled) {
@@ -62,7 +259,9 @@
         textCell(item.user_name),
         textCell(item.client_ip),
         textCell(item.user_agent, 'agent'),
-        textCell(item.delivered_at ? new Date(item.delivered_at * 1000).toLocaleString() : '—')
+        textCell(item.delivered_at
+          ? new Date(item.delivered_at * 1000).toLocaleString()
+          : '—')
       );
 
       const action = document.createElement('td');
@@ -70,7 +269,9 @@
       button.className = 'revoke';
       button.textContent = 'Revoke';
       button.addEventListener('click', async () => {
-        if (!confirm(`Revoke QR login for ${item.user_name || 'this account'}?`)) return;
+        if (!confirm(`Revoke QR login for ${item.user_name || 'this account'}?`)) {
+          return;
+        }
         button.disabled = true;
         await revoke(item.login_id);
       });
@@ -100,15 +301,11 @@
   }
 
   async function state() {
-    const r = await fetch('/api/secure_qr_login/admin/state', {
-      headers: headers(),
-      cache: 'no-store'
-    });
+    const r = await request('/api/secure_qr_login/admin/state');
 
     if (!r.ok) {
-      status.textContent = 'Authentication required';
-      status.className = 'status danger';
-      return;
+      if (r.status === 401) showAuthenticationError();
+      return false;
     }
 
     const d = await r.json();
@@ -124,12 +321,14 @@
     document.getElementById('rotation').textContent = `${d.qr_lifetime_seconds}s`;
     document.getElementById('pending').textContent =
       `${d.pending_sessions} / ${d.max_pending_sessions}`;
-    document.getElementById('activeCount').textContent = String((d.active || []).length);
+    document.getElementById('activeCount').textContent =
+      String((d.active || []).length);
     document.getElementById('version').textContent = d.version || '—';
     document.getElementById('build').textContent = d.build || '—';
 
     renderActive(d.active || []);
     renderHistory(d.history || []);
+    return true;
   }
 
   function fillSelect(select, items, selected, labelKey = null) {
@@ -156,7 +355,10 @@
     let displayNames = null;
 
     try {
-      displayNames = new Intl.DisplayNames([navigator.language || 'en'], {type: 'region'});
+      displayNames = new Intl.DisplayNames(
+        [navigator.language || 'en'],
+        {type: 'region'}
+      );
     } catch {}
 
     for (const code of codes || []) {
@@ -170,11 +372,11 @@
   }
 
   async function loadSettings() {
-    const r = await fetch('/api/secure_qr_login/admin/settings', {
-      headers: headers(),
-      cache: 'no-store'
-    });
-    if (!r.ok) return;
+    const r = await request('/api/secure_qr_login/admin/settings');
+    if (!r.ok) {
+      if (r.status === 401) showAuthenticationError();
+      return false;
+    }
 
     const d = await r.json();
     const v = d.values;
@@ -187,8 +389,16 @@
     document.getElementById('settingNotifyDenied').checked = v.notify_on_denied;
     document.getElementById('settingPrivate').checked = v.allow_private_networks;
 
-    fillSelect(document.getElementById('settingUsers'), d.users || [], v.allowed_user_ids || []);
-    fillSelect(document.getElementById('settingNotify'), d.notify_services || [], v.notify_services || []);
+    fillSelect(
+      document.getElementById('settingUsers'),
+      d.users || [],
+      v.allowed_user_ids || []
+    );
+    fillSelect(
+      document.getElementById('settingNotify'),
+      d.notify_services || [],
+      v.notify_services || []
+    );
     fillCountrySelect(
       document.getElementById('settingCountries'),
       d.country_codes || [],
@@ -196,18 +406,23 @@
     );
 
     const geo = d.geoip || {};
-    const release = geo.local_database_release ? ` · Database: ${geo.local_database_release}` : '';
+    const release = geo.local_database_release
+      ? ` · Database: ${geo.local_database_release}`
+      : '';
+
     let geoText = 'Country filtering is available.';
     if (geo.provider === 'nabu_casa') {
       geoText = geo.current_country
         ? `Provider: Nabu Casa + local GeoIP database · Current country: ${geo.current_country}${release}.`
         : geo.local_database_error
-        ? `Nabu Casa request detected, but local GeoIP is unavailable (${geo.local_database_error}). Country filtering will fail closed.`
-        : 'Nabu Casa request detected, but a usable public client IP/country was not available. Country filtering will fail closed.';
+          ? `Nabu Casa request detected, but local GeoIP is unavailable (${geo.local_database_error}). Country filtering will fail closed.`
+          : 'Nabu Casa request detected, but a usable public client IP/country was not available. Country filtering will fail closed.';
     } else if (geo.current_country) {
-      geoText = `Provider: Home Assistant client IP + local GeoIP database · Current country: ${geo.current_country}${release}.`;
+      geoText =
+        `Provider: Home Assistant client IP + local GeoIP database · Current country: ${geo.current_country}${release}.`;
     } else if (geo.local_database_ready) {
-      geoText = `Local GeoIP database is ready${release}, but this request could not be mapped to a public country (${geo.resolution_reason || 'unknown'}).`;
+      geoText =
+        `Local GeoIP database is ready${release}, but this request could not be mapped to a public country (${geo.resolution_reason || 'unknown'}).`;
     } else {
       geoText = geo.local_database_error
         ? `Local GeoIP database is not ready (${geo.local_database_error}). Country filtering will fail closed until it can be loaded.`
@@ -233,17 +448,17 @@
       : 'Never';
     document.getElementById('geoTimes').textContent =
       `Last update attempt: ${attempt} · Last successful update: ${success}`;
+    return true;
   }
 
   async function updateGeoIP() {
     geoUpdateButton.disabled = true;
     geoUpdateButton.textContent = 'Checking…';
 
-    const r = await fetch('/api/secure_qr_login/admin/geoip-update', {
+    const r = await request('/api/secure_qr_login/admin/geoip-update', {
       method: 'POST',
-      headers: headers({'Content-Type': 'application/json'}),
-      body: '{}',
-      cache: 'no-store'
+      headers: {'Content-Type': 'application/json'},
+      body: '{}'
     });
 
     const data = await r.json().catch(() => ({}));
@@ -258,36 +473,47 @@
 
   async function saveSettings() {
     const message = document.getElementById('settingsMessage');
-    const countries = selectedValues(document.getElementById('settingCountries'));
+    const countries = selectedValues(
+      document.getElementById('settingCountries')
+    );
 
     const payload = {
-      enable_window_seconds: Number(document.getElementById('settingWindow').value),
-      qr_lifetime_seconds: Number(document.getElementById('settingQr').value),
-      max_pending_sessions: Number(document.getElementById('settingPending').value),
-      history_limit: Number(document.getElementById('settingHistory').value),
-      allowed_user_ids: selectedValues(document.getElementById('settingUsers')),
-      notify_services: selectedValues(document.getElementById('settingNotify')),
-      notify_on_approved: document.getElementById('settingNotifyApproved').checked,
-      notify_on_denied: document.getElementById('settingNotifyDenied').checked,
+      enable_window_seconds:
+        Number(document.getElementById('settingWindow').value),
+      qr_lifetime_seconds:
+        Number(document.getElementById('settingQr').value),
+      max_pending_sessions:
+        Number(document.getElementById('settingPending').value),
+      history_limit:
+        Number(document.getElementById('settingHistory').value),
+      allowed_user_ids:
+        selectedValues(document.getElementById('settingUsers')),
+      notify_services:
+        selectedValues(document.getElementById('settingNotify')),
+      notify_on_approved:
+        document.getElementById('settingNotifyApproved').checked,
+      notify_on_denied:
+        document.getElementById('settingNotifyDenied').checked,
       allowed_countries: countries,
-      allow_private_networks: document.getElementById('settingPrivate').checked
+      allow_private_networks:
+        document.getElementById('settingPrivate').checked
     };
 
     saveSettingsButton.disabled = true;
     message.className = 'notice muted';
     message.textContent = 'Saving…';
 
-    const r = await fetch('/api/secure_qr_login/admin/settings', {
+    const r = await request('/api/secure_qr_login/admin/settings', {
       method: 'POST',
-      headers: headers({'Content-Type': 'application/json'}),
-      body: JSON.stringify(payload),
-      cache: 'no-store'
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
     });
 
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
       message.className = 'notice error';
-      message.textContent = `Unable to save settings: ${data.error || 'unknown error'}.`;
+      message.textContent =
+        `Unable to save settings: ${data.error || 'unknown error'}.`;
     } else {
       message.className = 'notice ok';
       message.textContent = 'Settings saved.';
@@ -298,63 +524,100 @@
   }
 
   async function setEnabled(value) {
-    await fetch('/api/secure_qr_login/admin/window', {
+    const r = await request('/api/secure_qr_login/admin/window', {
       method: 'POST',
-      headers: headers({'Content-Type': 'application/json'}),
-      body: JSON.stringify({enabled: value}),
-      cache: 'no-store'
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled: value})
     });
+
+    if (!r.ok) {
+      alert('Unable to change the QR login window.');
+    }
     await state();
   }
 
   async function revoke(loginId) {
-    const r = await fetch('/api/secure_qr_login/admin/revoke', {
+    const r = await request('/api/secure_qr_login/admin/revoke', {
       method: 'POST',
-      headers: headers({'Content-Type': 'application/json'}),
-      body: JSON.stringify({login_id: loginId}),
-      cache: 'no-store'
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({login_id: loginId})
     });
-    if (!r.ok) alert('Unable to revoke this login. It may already have been revoked.');
+    if (!r.ok) {
+      alert('Unable to revoke this login. It may already have been revoked.');
+    }
     await state();
   }
 
   async function revokeAll() {
-    if (!confirm('Revoke every QR-created login? This also closes the current QR login window and cancels pending requests.')) return;
+    if (!confirm(
+      'Revoke every QR-created login? This also closes the current QR login window and cancels pending requests.'
+    )) {
+      return;
+    }
 
     revokeAllButton.disabled = true;
-    const r = await fetch('/api/secure_qr_login/admin/revoke-all', {
+    const r = await request('/api/secure_qr_login/admin/revoke-all', {
       method: 'POST',
-      headers: headers({'Content-Type': 'application/json'}),
-      body: '{}',
-      cache: 'no-store'
+      headers: {'Content-Type': 'application/json'},
+      body: '{}'
     });
     if (!r.ok) alert('Unable to revoke all QR logins.');
     await state();
   }
 
   async function clearHistory() {
-    if (!confirm('Clear the Secure QR Login security history? Active logins will not be changed.')) return;
+    if (!confirm(
+      'Clear the Secure QR Login security history? Active logins will not be changed.'
+    )) {
+      return;
+    }
 
     clearHistoryButton.disabled = true;
-    const r = await fetch('/api/secure_qr_login/admin/clear-history', {
+    const r = await request('/api/secure_qr_login/admin/clear-history', {
       method: 'POST',
-      headers: headers({'Content-Type': 'application/json'}),
-      body: '{}',
-      cache: 'no-store'
+      headers: {'Content-Type': 'application/json'},
+      body: '{}'
     });
     if (!r.ok) alert('Unable to clear history.');
     await state();
   }
 
-  document.getElementById('enable').addEventListener('click', () => setEnabled(true));
-  document.getElementById('disable').addEventListener('click', () => setEnabled(false));
+  async function boot() {
+    status.textContent = 'Authenticating…';
+    status.className = 'status';
+    countdown.textContent =
+      'Connecting securely to your Home Assistant session…';
+
+    if (!await ensureAuthentication()) {
+      showAuthenticationError();
+      return;
+    }
+
+    const [stateOk, settingsOk] = await Promise.all([
+      state(),
+      loadSettings()
+    ]);
+
+    if (!stateOk || !settingsOk) {
+      return;
+    }
+
+    setInterval(renderCountdown, 250);
+    setInterval(state, 5000);
+  }
+
+  document.getElementById('enable').addEventListener(
+    'click',
+    () => setEnabled(true)
+  );
+  document.getElementById('disable').addEventListener(
+    'click',
+    () => setEnabled(false)
+  );
   revokeAllButton.addEventListener('click', revokeAll);
   clearHistoryButton.addEventListener('click', clearHistory);
   saveSettingsButton.addEventListener('click', saveSettings);
   geoUpdateButton.addEventListener('click', updateGeoIP);
 
-  state();
-  loadSettings();
-  setInterval(renderCountdown, 250);
-  setInterval(state, 5000);
+  boot().catch(() => showAuthenticationError());
 })();
