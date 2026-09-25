@@ -617,6 +617,8 @@ class AdminSettingsView(HomeAssistantView):
                     "local_database_source": manager.geoip.source_info,
                     "local_database_release": manager.geoip.database_release,
                     "local_database_error": manager.geoip.last_error,
+                    "last_update_attempt": manager.geoip.last_update_attempt,
+                    "last_successful_update": manager.geoip.last_successful_update,
                 },
             },
         )
@@ -734,6 +736,39 @@ class AdminSettingsView(HomeAssistantView):
 
         await manager.async_update_settings(options)
         return _json(self, {"status": "saved"})
+
+
+class AdminGeoIPUpdateView(HomeAssistantView):
+    """Manually check/update the local GeoIP database."""
+
+    url = "/api/secure_qr_login/admin/geoip-update"
+    name = "api:secure_qr_login:admin_geoip_update"
+    requires_auth = True
+
+    async def post(self, request: web.Request) -> web.Response:
+        if rejected := _reject_cross_origin(self, request):
+            return rejected
+        if rejected := _require_admin(self, request):
+            return rejected
+
+        manager = _manager(request)
+        if manager is None:
+            return _json(self, {"error": "not_ready"}, 503)
+
+        result = await manager.async_manual_geoip_update()
+        return _json(
+            self,
+            {
+                "success": result.success,
+                "updated": result.updated,
+                "status": result.status,
+                "release": result.release,
+                "error": result.error,
+                "attempted_at": result.attempted_at,
+                "successful_at": result.successful_at,
+            },
+            200 if result.success else 503,
+        )
 
 
 class AdminWindowView(HomeAssistantView):
@@ -919,6 +954,7 @@ def register_views(hass: HomeAssistant) -> None:
         ApprovalActionView(),
         AdminStateView(),
         AdminSettingsView(),
+        AdminGeoIPUpdateView(),
         AdminWindowView(),
         AdminRevokeView(),
         AdminRevokeAllView(),
