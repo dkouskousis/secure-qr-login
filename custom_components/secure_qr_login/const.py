@@ -2,11 +2,12 @@
 
 DOMAIN = "secure_qr_login"
 NAME = "Secure QR Login"
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 PLATFORMS = ["switch"]
 
-# Config-entry option keys.
+# Config-entry option keys. They are persisted by Home Assistant, but from
+# v1.4.0 onward they are managed from the integration's own admin panel.
 CONF_ENABLE_WINDOW_SECONDS = "enable_window_seconds"
 CONF_QR_LIFETIME_SECONDS = "qr_lifetime_seconds"
 CONF_MAX_PENDING_SESSIONS = "max_pending_sessions"
@@ -15,8 +16,10 @@ CONF_ALLOWED_USER_IDS = "allowed_user_ids"
 CONF_NOTIFY_SERVICES = "notify_services"
 CONF_NOTIFY_ON_APPROVED = "notify_on_approved"
 CONF_NOTIFY_ON_DENIED = "notify_on_denied"
+CONF_ALLOWED_COUNTRIES = "allowed_countries"
+CONF_ALLOW_PRIVATE_NETWORKS = "allow_private_networks"
 
-# Secure defaults. The options flow enforces the bounds below.
+# Secure defaults.
 DEFAULT_ENABLE_WINDOW_SECONDS = 180
 DEFAULT_QR_LIFETIME_SECONDS = 10
 DEFAULT_MAX_PENDING_SESSIONS = 3
@@ -25,6 +28,8 @@ DEFAULT_ALLOWED_USER_IDS: list[str] = []
 DEFAULT_NOTIFY_SERVICES: list[str] = []
 DEFAULT_NOTIFY_ON_APPROVED = True
 DEFAULT_NOTIFY_ON_DENIED = True
+DEFAULT_ALLOWED_COUNTRIES: list[str] = []
+DEFAULT_ALLOW_PRIVATE_NETWORKS = True
 
 # Deliberately conservative configurable bounds.
 MIN_ENABLE_WINDOW_SECONDS = 60
