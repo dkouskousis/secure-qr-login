@@ -2,6 +2,7 @@
 testpaths = ["tests"]
 addopts = "-q"
 python_files = ["test_*.py"]
+asyncio_mode = "auto"
 
 [tool.ruff]
 target-version = "py314"
