@@ -600,6 +600,7 @@ class AdminSettingsView(HomeAssistantView):
                 },
                 "users": user_options,
                 "notify_services": notify_options,
+                "country_codes": sorted(ISO_COUNTRY_CODES),
                 "geoip": {
                     "source": "Cloudflare CF-IPCountry",
                     "header_present": bool(cf_country),
