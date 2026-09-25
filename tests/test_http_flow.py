@@ -314,3 +314,67 @@ async def test_country_allowlist_denies_non_matching_cloudflare_country(
     assert payload["error"] == "country_not_allowed"
     assert payload["country"] == "US"
     assert not qr_manager.sessions
+
+
+async def test_admin_settings_api_saves_validated_values(
+    hass_client,
+    qr_manager,
+    monkeypatch,
+) -> None:
+    """Admin settings are validated server-side before they are persisted."""
+    client = await hass_client()
+    captured = {}
+
+    async def fake_update_settings(options):
+        captured.update(options)
+
+    monkeypatch.setattr(qr_manager, "async_update_settings", fake_update_settings)
+
+    response = await client.post(
+        "/api/secure_qr_login/admin/settings",
+        json={
+            "enable_window_seconds": 180,
+            "qr_lifetime_seconds": 10,
+            "max_pending_sessions": 3,
+            "history_limit": 100,
+            "allowed_user_ids": [],
+            "notify_services": [],
+            "notify_on_approved": True,
+            "notify_on_denied": True,
+            "allowed_countries": ["gr", "DE", "GR"],
+            "allow_private_networks": True,
+        },
+        headers={"Origin": _origin(client)},
+    )
+
+    assert response.status == 200
+    assert captured["allowed_countries"] == ["GR", "DE"]
+    assert captured["allow_private_networks"] is True
+
+
+async def test_admin_settings_api_rejects_invalid_country_code(
+    hass_client,
+    qr_manager,
+) -> None:
+    """Arbitrary two-letter strings are not accepted as countries."""
+    client = await hass_client()
+
+    response = await client.post(
+        "/api/secure_qr_login/admin/settings",
+        json={
+            "enable_window_seconds": 180,
+            "qr_lifetime_seconds": 10,
+            "max_pending_sessions": 3,
+            "history_limit": 100,
+            "allowed_user_ids": [],
+            "notify_services": [],
+            "notify_on_approved": True,
+            "notify_on_denied": True,
+            "allowed_countries": ["ZZ"],
+            "allow_private_networks": True,
+        },
+        headers={"Origin": _origin(client)},
+    )
+
+    assert response.status == 400
+    assert (await response.json())["error"] == "invalid_country_code"
