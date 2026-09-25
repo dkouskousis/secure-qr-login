@@ -45,6 +45,8 @@ async def async_get_config_entry_diagnostics(
         "local_geoip_database_ready": manager.geoip.database_ready,
         "local_geoip_database_release": manager.geoip.database_release,
         "local_geoip_last_error": manager.geoip.last_error,
+        "local_geoip_last_update_attempt": manager.geoip.last_update_attempt,
+        "local_geoip_last_successful_update": manager.geoip.last_successful_update,
     }
 
 
