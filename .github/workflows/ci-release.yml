@@ -30,7 +30,7 @@ jobs:
           python -m pip install pytest pytest-homeassistant-custom-component segno==1.6.6
 
       - name: Run pytest
-        run: pytest
+        run: python -m pytest
 
       - name: Compile Python
         run: python -m compileall -q custom_components tests
