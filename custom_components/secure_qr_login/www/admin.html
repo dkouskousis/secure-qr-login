@@ -80,13 +80,13 @@
 
       <h3>Country restriction</h3>
       <p class="muted small">
-        Uses Cloudflare <code>CF-IPCountry</code>. Leave empty to disable country filtering.
-        Enter ISO two-letter country codes separated by commas, for example <code>GR, DE, FR</code>.
+        Uses Cloudflare <code>CF-IPCountry</code>. Leave the list empty to disable country filtering.
       </p>
 
       <label class="field">
         <span>Allowed countries</span>
-        <input id="settingCountries" type="text" autocomplete="off" placeholder="GR, DE, FR">
+        <select id="settingCountries" multiple size="8"></select>
+        <small>Select one or more countries. Hold Ctrl/Cmd to select multiple items on desktop.</small>
       </label>
 
       <label class="check-row">
