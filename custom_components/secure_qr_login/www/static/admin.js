@@ -195,17 +195,22 @@
     );
 
     const geo = d.geoip || {};
+    const release = geo.local_database_release ? ` · Database: ${geo.local_database_release}` : '';
     let geoText = 'Country filtering is available.';
     if (geo.provider === 'nabu_casa') {
       geoText = geo.current_country
-        ? `Provider: Nabu Casa + local GeoIP database · Current country: ${geo.current_country}.`
+        ? `Provider: Nabu Casa + local GeoIP database · Current country: ${geo.current_country}${release}.`
+        : geo.local_database_error
+        ? `Nabu Casa request detected, but local GeoIP is unavailable (${geo.local_database_error}). Country filtering will fail closed.`
         : 'Nabu Casa request detected, but a usable public client IP/country was not available. Country filtering will fail closed.';
     } else if (geo.current_country) {
-      geoText = `Provider: Home Assistant client IP + local GeoIP database · Current country: ${geo.current_country}.`;
+      geoText = `Provider: Home Assistant client IP + local GeoIP database · Current country: ${geo.current_country}${release}.`;
     } else if (geo.local_database_ready) {
-      geoText = `Local GeoIP database is ready, but this request could not be mapped to a public country (${geo.resolution_reason || 'unknown'}).`;
+      geoText = `Local GeoIP database is ready${release}, but this request could not be mapped to a public country (${geo.resolution_reason || 'unknown'}).`;
     } else {
-      geoText = 'Local GeoIP database is not ready. Country filtering will fail closed until it can be loaded.';
+      geoText = geo.local_database_error
+        ? `Local GeoIP database is not ready (${geo.local_database_error}). Country filtering will fail closed until it can be loaded.`
+        : 'Local GeoIP database is not ready. Country filtering will fail closed until it can be loaded.';
     }
     document.getElementById('geoStatus').textContent = geoText;
   }
