@@ -34,14 +34,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         update=True,
     )
 
-    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+    # Settings are read dynamically from entry.options and are updated by the
+    # admin API. Avoiding a config-entry reload prevents unnecessary panel
+    # interruptions and keeps already-delivered QR sessions untouched.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
-
-
-async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload when security options change."""
-    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
