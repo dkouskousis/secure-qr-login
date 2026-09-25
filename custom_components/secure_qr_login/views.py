@@ -2,13 +2,14 @@
 
 Security model
 --------------
-* QR login is disabled by default and opens for at most three minutes.
-* A public session id identifies a request but is never sufficient to fetch tokens.
-* The requesting browser receives a separate high-entropy device secret.
-* Only a SHA-256 digest of that device secret is stored in session state.
-* Every displayed QR carries an independent token valid for ten seconds.
-* Approval requires a normal authenticated Home Assistant user plus the current QR token.
-* Token retrieval requires the device secret and is single-use.
+* QR login is disabled by default and opens only for a bounded admin window.
+* A public session id is never sufficient to retrieve HA credentials.
+* The requesting browser holds a separate device secret.
+* Only SHA-256 digests of device/QR secrets are retained server-side.
+* QR bearer tokens rotate frequently and can approve/deny only.
+* Credential retrieval is single-use and requires the device secret.
+* Issued refresh tokens are persisted only by their non-secret internal id so
+  administrators can revoke them later and orphaned tokens can be cleaned up.
 """
 
 from __future__ import annotations
@@ -24,12 +25,11 @@ import segno
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
-from .auth import async_issue_tokens
+from .auth import async_issue_tokens, async_revoke_refresh_token
 from .const import (
     DOMAIN,
     GLOBAL_START_LIMIT,
     GLOBAL_START_WINDOW_SECONDS,
-    QR_LIFETIME_SECONDS,
     START_LIMIT_PER_IP,
     START_LIMIT_WINDOW_SECONDS,
     STATUS_LIMIT_PER_IP,
@@ -102,12 +102,16 @@ def _client_ip(request: web.Request) -> str:
 
 def _get_session(manager, session_id: str) -> LoginSession | None:
     session = manager.sessions.get(session_id)
-    if session is None:
-        return None
-    if session.expired():
-        manager.sessions.pop(session_id, None)
+    if session is None or session.expired():
         return None
     return session
+
+
+def _require_admin(view: HomeAssistantView, request: web.Request):
+    user = request["hass_user"]
+    if user.is_admin:
+        return None
+    return _json(view, {"error": "admin_required"}, 403)
 
 
 class StartView(HomeAssistantView):
@@ -118,6 +122,7 @@ class StartView(HomeAssistantView):
     async def post(self, request: web.Request) -> web.Response:
         if rejected := _reject_cross_origin(self, request):
             return rejected
+
         manager = _manager(request)
         if manager is None or not manager.enabled:
             return _json(self, {"error": "disabled"}, 503)
@@ -125,6 +130,9 @@ class StartView(HomeAssistantView):
         ip = _client_ip(request)
         if not _START_IP_LIMITER.allow(ip) or not _START_GLOBAL_LIMITER.allow("global"):
             return _json(self, {"error": "rate_limited"}, 429)
+
+        if manager.pending_count >= manager.max_pending_sessions:
+            return _json(self, {"error": "pending_limit_reached"}, 429)
 
         session_id = random_session_id()
         device_secret = random_device_secret()
@@ -139,8 +147,12 @@ class StartView(HomeAssistantView):
             expires_at=manager.new_session_expiry(),
         )
         manager.sessions[session_id] = session
-        manager.audit.appendleft(
-            AuditEntry(event="session_started", session_id=session_id, client_ip=ip)
+        await manager.async_record(
+            AuditEntry(
+                event="session_started",
+                session_id=session_id,
+                client_ip=ip,
+            )
         )
         return _json(
             self,
@@ -148,7 +160,7 @@ class StartView(HomeAssistantView):
                 "session_id": session_id,
                 "device_secret": device_secret,
                 "expires_in": max(0, int(session.expires_at - now)),
-                "qr_lifetime": QR_LIFETIME_SECONDS,
+                "qr_lifetime": manager.qr_lifetime_seconds,
             },
         )
 
@@ -163,6 +175,7 @@ class QrView(HomeAssistantView):
     async def post(self, request: web.Request) -> web.Response:
         if rejected := _reject_cross_origin(self, request):
             return rejected
+
         manager = _manager(request)
         if manager is None or not manager.enabled:
             return _json(self, {"error": "disabled"}, 503)
@@ -170,6 +183,7 @@ class QrView(HomeAssistantView):
         payload = await _json_body(request)
         if payload is None:
             return _json(self, {"error": "invalid_json"}, 400)
+
         session_id = _clean(payload.get("session_id"), 128)
         device_secret = _clean(payload.get("device_secret"), 256)
         session = _get_session(manager, session_id)
@@ -181,13 +195,19 @@ class QrView(HomeAssistantView):
             return _json(self, {"error": "invalid_session_secret"}, 403)
 
         qr_token = random_qr_token()
+        qr_lifetime = manager.qr_lifetime_seconds
         session.qr_token_digest = secret_digest(qr_token)
         session.qr_expires_at = min(
-            time.time() + QR_LIFETIME_SECONDS,
+            time.time() + qr_lifetime,
             session.expires_at,
             manager.enabled_until,
         )
-        base_url = session.client_id.rstrip("/") if session.client_id else f"{request.scheme}://{request.host}"
+
+        base_url = (
+            session.client_id.rstrip("/")
+            if session.client_id
+            else f"{request.scheme}://{request.host}"
+        )
         approval_url = (
             f"{base_url}/secure_qr_login/approve"
             f"?session_id={session.session_id}&qr_token={qr_token}"
@@ -195,18 +215,19 @@ class QrView(HomeAssistantView):
         qr = segno.make(approval_url, error="m")
         output = BytesIO()
         qr.save(output, kind="svg", scale=5, border=4, xmldecl=False, nl=False)
+
         return web.Response(
             body=output.getvalue(),
             content_type="image/svg+xml",
             headers={
                 **NO_STORE_HEADERS,
-                "X-QR-Expires-In": str(QR_LIFETIME_SECONDS),
+                "X-QR-Expires-In": str(qr_lifetime),
             },
         )
 
 
 class StatusView(HomeAssistantView):
-    """Return status, and once approved deliver credentials exactly once."""
+    """Return status and deliver approved credentials exactly once."""
 
     url = "/api/secure_qr_login/status"
     name = "api:secure_qr_login:status"
@@ -215,9 +236,11 @@ class StatusView(HomeAssistantView):
     async def post(self, request: web.Request) -> web.Response:
         if rejected := _reject_cross_origin(self, request):
             return rejected
+
         ip = _client_ip(request)
         if not _STATUS_IP_LIMITER.allow(ip):
             return _json(self, {"error": "rate_limited"}, 429)
+
         manager = _manager(request)
         if manager is None or not manager.enabled:
             return _json(self, {"error": "disabled"}, 503)
@@ -225,6 +248,7 @@ class StatusView(HomeAssistantView):
         payload = await _json_body(request)
         if payload is None:
             return _json(self, {"error": "invalid_json"}, 400)
+
         session_id = _clean(payload.get("session_id"), 128)
         device_secret = _clean(payload.get("device_secret"), 256)
         session = _get_session(manager, session_id)
@@ -233,33 +257,43 @@ class StatusView(HomeAssistantView):
         if not session.device_secret_valid(device_secret):
             return _json(self, {"error": "invalid_session_secret"}, 403)
 
-        if session.status == "approved":
-            if session.consumed or session.refresh_token is None or not session.access_token:
-                manager.sessions.pop(session_id, None)
-                return _json(self, {"error": "already_consumed"}, 410)
-
-            session.consumed = True
-            response = {
-                "status": "approved",
-                "access_token": session.access_token,
-                "refresh_token": session.refresh_token.token,
-                "token_expires_in": session.token_expires_in,
-            }
-            manager.audit.appendleft(
-                AuditEntry(
-                    event="credentials_consumed",
-                    session_id=session.session_id,
-                    client_ip=session.client_ip,
-                    user_id=session.approved_user_id,
-                    user_name=session.approved_user_name,
-                )
-            )
+        if session.status == "denied":
+            response = session.public_status()
             manager.sessions.pop(session_id, None)
-            session.access_token = None
-            session.refresh_token = None
             return _json(self, response)
 
-        return _json(self, session.public_status())
+        if session.status != "approved":
+            return _json(self, session.public_status())
+
+        if session.consumed or session.refresh_token is None or not session.access_token:
+            manager.sessions.pop(session_id, None)
+            return _json(self, {"error": "already_consumed"}, 410)
+
+        # Persist "delivered" before returning the secret token to the browser.
+        # If storage fails, fail closed and revoke the newly-created HA token.
+        try:
+            await manager.async_mark_consumed(session)
+        except Exception:
+            _LOGGER.exception("Unable to persist consumed Secure QR Login session")
+            await async_revoke_refresh_token(request.app["hass"], session.refresh_token)
+            manager.store.active.pop(session.session_id, None)
+            await manager.store.async_save(manager.history_limit)
+            manager.sessions.pop(session_id, None)
+            return _json(self, {"error": "credential_delivery_failed"}, 500)
+
+        session.consumed = True
+        response = {
+            "status": "approved",
+            "access_token": session.access_token,
+            "refresh_token": session.refresh_token.token,
+            "token_expires_in": session.token_expires_in,
+        }
+        manager.sessions.pop(session_id, None)
+
+        # Remove credential references from integration-managed memory immediately.
+        session.access_token = None
+        session.refresh_token = None
+        return _json(self, response)
 
 
 class ApprovalDetailsView(HomeAssistantView):
@@ -271,6 +305,7 @@ class ApprovalDetailsView(HomeAssistantView):
         manager = _manager(request)
         if manager is None or not manager.enabled:
             return _json(self, {"error": "disabled"}, 503)
+
         session_id = _clean(request.query.get("session_id"), 128)
         qr_token = _clean(request.query.get("qr_token"), 256)
         session = _get_session(manager, session_id)
@@ -282,6 +317,9 @@ class ApprovalDetailsView(HomeAssistantView):
             return _json(self, {"error": "qr_expired"}, 410)
 
         approver = request["hass_user"]
+        if not manager.user_allowed(approver):
+            return _json(self, {"error": "user_not_allowed"}, 403)
+
         details = session.approval_details()
         details["account"] = approver.name or approver.id
         return _json(self, details)
@@ -295,9 +333,11 @@ class ApprovalActionView(HomeAssistantView):
     async def post(self, request: web.Request) -> web.Response:
         if rejected := _reject_cross_origin(self, request):
             return rejected
+
         manager = _manager(request)
         if manager is None or not manager.enabled:
             return _json(self, {"error": "disabled"}, 503)
+
         payload = await _json_body(request)
         if payload is None:
             return _json(self, {"error": "invalid_json"}, 400)
@@ -317,10 +357,16 @@ class ApprovalActionView(HomeAssistantView):
             return _json(self, {"error": "qr_expired"}, 410)
 
         approver = request["hass_user"]
+        if not manager.user_allowed(approver):
+            return _json(self, {"error": "user_not_allowed"}, 403)
+
         approver_name = approver.name or approver.id
+
         if action == "deny":
             session.status = "denied"
-            manager.audit.appendleft(
+            session.qr_token_digest = ""
+            session.qr_expires_at = 0.0
+            await manager.async_record(
                 AuditEntry(
                     event="denied",
                     session_id=session.session_id,
@@ -329,6 +375,7 @@ class ApprovalActionView(HomeAssistantView):
                     user_name=approver_name,
                 )
             )
+            await manager.async_notify_result("denied", session, approver_name)
             return _json(self, {"status": "denied"})
 
         try:
@@ -351,7 +398,20 @@ class ApprovalActionView(HomeAssistantView):
         session.status = "approved"
         session.qr_token_digest = ""
         session.qr_expires_at = 0.0
-        manager.audit.appendleft(
+
+        # Persist provisional metadata before reporting success. If persistence
+        # fails, the HA refresh token is revoked and approval fails closed.
+        try:
+            await manager.async_track_issued(session)
+        except Exception:
+            _LOGGER.exception("Unable to persist issued Secure QR Login token")
+            await async_revoke_refresh_token(request.app["hass"], refresh_token)
+            session.refresh_token = None
+            session.access_token = None
+            session.status = "error"
+            return _json(self, {"error": "token_tracking_failed"}, 500)
+
+        await manager.async_record(
             AuditEntry(
                 event="approved",
                 session_id=session.session_id,
@@ -360,6 +420,7 @@ class ApprovalActionView(HomeAssistantView):
                 user_name=approver_name,
             )
         )
+        await manager.async_notify_result("approved", session, approver_name)
         return _json(self, {"status": "approved", "account": approver_name})
 
 
@@ -369,22 +430,25 @@ class AdminStateView(HomeAssistantView):
     requires_auth = True
 
     async def get(self, request: web.Request) -> web.Response:
-        user = request["hass_user"]
-        if not user.is_admin:
-            return _json(self, {"error": "admin_required"}, 403)
+        if rejected := _require_admin(self, request):
+            return rejected
+
         manager = _manager(request)
         if manager is None:
             return _json(self, {"error": "not_ready"}, 503)
+
+        active = await manager.async_get_active_public()
         return _json(
             self,
             {
                 "enabled": manager.enabled,
                 "remaining_seconds": manager.enabled_remaining,
-                "pending_sessions": sum(
-                    1 for session in manager.sessions.values()
-                    if session.status == "pending" and not session.expired()
-                ),
-                "audit": [entry.as_dict() for entry in list(manager.audit)[:20]],
+                "pending_sessions": manager.pending_count,
+                "max_pending_sessions": manager.max_pending_sessions,
+                "window_seconds": manager.enable_window_seconds,
+                "qr_lifetime_seconds": manager.qr_lifetime_seconds,
+                "active": active,
+                "history": [entry.as_dict() for entry in manager.history],
             },
         )
 
@@ -397,23 +461,64 @@ class AdminWindowView(HomeAssistantView):
     async def post(self, request: web.Request) -> web.Response:
         if rejected := _reject_cross_origin(self, request):
             return rejected
-        user = request["hass_user"]
-        if not user.is_admin:
-            return _json(self, {"error": "admin_required"}, 403)
+        if rejected := _require_admin(self, request):
+            return rejected
+
         manager = _manager(request)
         if manager is None:
             return _json(self, {"error": "not_ready"}, 503)
+
         payload = await _json_body(request)
         if payload is None or payload.get("enabled") not in {True, False}:
             return _json(self, {"error": "invalid_request"}, 400)
+
         if payload["enabled"]:
             await manager.async_enable()
         else:
             await manager.async_disable("admin_disabled")
+
         return _json(
             self,
-            {"enabled": manager.enabled, "remaining_seconds": manager.enabled_remaining},
+            {
+                "enabled": manager.enabled,
+                "remaining_seconds": manager.enabled_remaining,
+            },
         )
+
+
+class AdminRevokeView(HomeAssistantView):
+    """Revoke a refresh token created by this integration."""
+
+    url = "/api/secure_qr_login/admin/revoke"
+    name = "api:secure_qr_login:admin_revoke"
+    requires_auth = True
+
+    async def post(self, request: web.Request) -> web.Response:
+        if rejected := _reject_cross_origin(self, request):
+            return rejected
+        if rejected := _require_admin(self, request):
+            return rejected
+
+        manager = _manager(request)
+        if manager is None:
+            return _json(self, {"error": "not_ready"}, 503)
+
+        payload = await _json_body(request)
+        if payload is None:
+            return _json(self, {"error": "invalid_json"}, 400)
+
+        login_id = _clean(payload.get("login_id"), 128)
+        if not login_id:
+            return _json(self, {"error": "invalid_login_id"}, 400)
+
+        actor = request["hass_user"]
+        revoked = await manager.async_revoke_login(
+            login_id,
+            actor_user_name=actor.name or actor.id,
+        )
+        if not revoked:
+            return _json(self, {"error": "active_login_not_found"}, 404)
+        return _json(self, {"status": "revoked"})
 
 
 class _PageView(HomeAssistantView):
@@ -460,9 +565,11 @@ class StaticView(HomeAssistantView):
         content_type = self._ALLOWED.get(filename)
         if content_type is None:
             return web.Response(text="Not found", status=404)
+
         path = WWW_DIR / "static" / filename
         if not path.is_file():
             return web.Response(text="Not found", status=404)
+
         return web.FileResponse(
             path,
             headers={
@@ -483,6 +590,7 @@ def register_views(hass: HomeAssistant) -> None:
         ApprovalActionView(),
         AdminStateView(),
         AdminWindowView(),
+        AdminRevokeView(),
         StartPageView(),
         ApprovePageView(),
         AdminPageView(),
