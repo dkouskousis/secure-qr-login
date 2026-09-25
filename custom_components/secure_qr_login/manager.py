@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import timedelta
-import ipaddress
 import time
 from typing import Callable
 
@@ -44,6 +43,7 @@ from .const import (
     MIN_QR_LIFETIME_SECONDS,
     ISO_COUNTRY_CODES,
 )
+from .geoip import LocalGeoIPResolver, is_nabu_casa_request
 from .models import ActiveLogin, AuditEntry, LoginSession
 from .notifications import async_send_security_notification
 from .storage import PersistentSecurityStore
@@ -57,6 +57,7 @@ class SecureQrLoginManager:
         self.entry = entry
         self.sessions: dict[str, LoginSession] = {}
         self.store = PersistentSecurityStore(hass)
+        self.geoip = LocalGeoIPResolver(hass)
         self.enabled_until = 0.0
         self._disable_unsub: Callable[[], None] | None = None
         self._listeners: set[Callable[[], None]] = set()
@@ -67,6 +68,8 @@ class SecureQrLoginManager:
     async def async_initialize(self) -> None:
         """Load persistent metadata and revoke orphaned unconsumed tokens."""
         await self.store.async_load(self.history_limit)
+        if self.allowed_countries:
+            await self.geoip.async_initialize()
         changed = False
 
         for login_id, record in list(self.store.active.items()):
@@ -235,62 +238,66 @@ class SecureQrLoginManager:
         allowlist = self.allowed_user_ids
         return not allowlist or user.id in allowlist
 
-    def country_allowed(self, request) -> tuple[bool, str, str]:
-        """Evaluate the optional Cloudflare country allowlist.
+    async def async_country_allowed(self, request) -> tuple[bool, str, str]:
+        """Evaluate the optional country allowlist.
 
-        Country restriction is an additional policy layer, never an
-        authentication factor. When enabled, public internet requests fail
-        closed if the Cloudflare country headers are missing or invalid.
+        Provider order:
+        1. Trusted Cloudflare headers, when present.
+        2. Home Assistant/Nabu Casa client IP resolved locally with GeoIP2Fast.
+        3. Optional LAN/private-network bypass for non-Nabu-Casa requests.
 
-        Private/loopback/link-local clients may optionally bypass GeoIP because
-        those requests never traverse Cloudflare and therefore have no
-        CF-IPCountry header.
+        GeoIP is only an additional policy layer; it never replaces normal
+        Home Assistant authentication, the temporary admin window, QR token or
+        device-secret checks.
         """
         allowed = self.allowed_countries
         if not allowed:
             return True, "", "disabled"
 
-        # Cloudflare headers take precedence over request.remote. This is
-        # important with cloudflared/reverse proxies where request.remote may
-        # otherwise be the proxy's private address rather than the visitor.
         country = (request.headers.get("CF-IPCountry") or "").upper().strip()
         cf_ray = request.headers.get("CF-Ray")
         cf_connecting_ip = request.headers.get("CF-Connecting-IP")
         through_cloudflare = bool(cf_ray or cf_connecting_ip or country)
 
         if through_cloudflare:
-            # Require the full header set before trusting CF-IPCountry.
-            if not cf_ray or not cf_connecting_ip:
+            if not cf_ray or not cf_connecting_ip or len(country) != 2:
                 return False, country or "UNKNOWN", "cloudflare_headers_missing"
-        else:
-            remote = request.remote or ""
-            try:
-                ip = ipaddress.ip_address(remote)
-            except ValueError:
-                ip = None
 
-            if (
-                ip is not None
-                and self.allow_private_networks
-                and (ip.is_private or ip.is_loopback or ip.is_link_local)
-            ):
+            if country not in ISO_COUNTRY_CODES:
+                return False, country or "UNKNOWN", "country_unknown"
+
+            if country in allowed:
+                return True, country, "cloudflare_allowed"
+
+            return False, country, "country_not_allowed"
+
+        nabu_request = is_nabu_casa_request()
+        result = await self.geoip.async_lookup_ip(request.remote)
+
+        if result.reason == "private_network":
+            # A Nabu Casa Remote UI request should carry the real public client
+            # address through SniTun. Never treat a private tunnel/relay address
+            # as a LAN bypass because that would disable country enforcement.
+            if nabu_request:
+                return False, "UNKNOWN", "nabu_client_ip_unavailable"
+
+            if self.allow_private_networks:
                 return True, "LOCAL", "private_network"
 
-            # Public requests with a country allowlist fail closed when there
-            # is no trusted GeoIP source.
-            return False, "UNKNOWN", "cloudflare_headers_missing"
+            return False, "LOCAL", "private_network_not_allowed"
 
-        if (
-            len(country) != 2
-            or not country.isalpha()
-            or country in {"XX"}
-        ):
-            return False, country or "UNKNOWN", "country_unknown"
+        if result.country_code is None:
+            return False, "UNKNOWN", result.reason
 
-        if country in allowed:
-            return True, country, "allowed"
+        if result.country_code in allowed:
+            return (
+                True,
+                result.country_code,
+                "nabu_casa_allowed" if nabu_request else "local_geoip_allowed",
+            )
 
-        return False, country, "country_not_allowed"
+        return False, result.country_code, "country_not_allowed"
+
 
     async def async_record(self, entry: AuditEntry) -> None:
         """Persist a credential-free security event."""
@@ -366,6 +373,9 @@ class SecureQrLoginManager:
             self.entry,
             options=options,
         )
+
+        if self.allowed_countries:
+            await self.geoip.async_initialize()
 
         # Apply a reduced history limit immediately.
         del self.store.history[self.history_limit :]
