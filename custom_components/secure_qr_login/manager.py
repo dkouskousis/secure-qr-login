@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import ipaddress
 import time
 from typing import Callable
 
@@ -12,7 +13,9 @@ from homeassistant.helpers.event import async_call_later, async_track_time_inter
 
 from .auth import async_revoke_refresh_token
 from .const import (
+    CONF_ALLOWED_COUNTRIES,
     CONF_ALLOWED_USER_IDS,
+    CONF_ALLOW_PRIVATE_NETWORKS,
     CONF_ENABLE_WINDOW_SECONDS,
     CONF_HISTORY_LIMIT,
     CONF_MAX_PENDING_SESSIONS,
@@ -20,7 +23,9 @@ from .const import (
     CONF_NOTIFY_ON_DENIED,
     CONF_NOTIFY_SERVICES,
     CONF_QR_LIFETIME_SECONDS,
+    DEFAULT_ALLOWED_COUNTRIES,
     DEFAULT_ALLOWED_USER_IDS,
+    DEFAULT_ALLOW_PRIVATE_NETWORKS,
     DEFAULT_ENABLE_WINDOW_SECONDS,
     DEFAULT_HISTORY_LIMIT,
     DEFAULT_MAX_PENDING_SESSIONS,
@@ -174,6 +179,32 @@ class SecureQrLoginManager:
         )
 
     @property
+    def allowed_countries(self) -> set[str]:
+        """Return configured ISO-3166-1 alpha-2 country codes."""
+        raw = self.entry.options.get(
+            CONF_ALLOWED_COUNTRIES,
+            DEFAULT_ALLOWED_COUNTRIES,
+        )
+        return {
+            str(item).upper()
+            for item in raw
+            if isinstance(item, str)
+            and len(item) == 2
+            and item.isalpha()
+            and item.upper() not in {"XX"}
+        }
+
+    @property
+    def allow_private_networks(self) -> bool:
+        """Whether RFC1918/loopback/link-local clients bypass GeoIP filtering."""
+        return bool(
+            self.entry.options.get(
+                CONF_ALLOW_PRIVATE_NETWORKS,
+                DEFAULT_ALLOW_PRIVATE_NETWORKS,
+            )
+        )
+
+    @property
     def enabled(self) -> bool:
         return time.time() < self.enabled_until
 
@@ -205,6 +236,57 @@ class SecureQrLoginManager:
         allowlist = self.allowed_user_ids
         return not allowlist or user.id in allowlist
 
+    def country_allowed(self, request) -> tuple[bool, str, str]:
+        """Evaluate the optional Cloudflare country allowlist.
+
+        Country restriction is an additional policy layer, never an
+        authentication factor. When enabled, public internet requests fail
+        closed if the Cloudflare country headers are missing or invalid.
+
+        Private/loopback/link-local clients may optionally bypass GeoIP because
+        those requests never traverse Cloudflare and therefore have no
+        CF-IPCountry header.
+        """
+        allowed = self.allowed_countries
+        if not allowed:
+            return True, "", "disabled"
+
+        remote = request.remote or ""
+        try:
+            ip = ipaddress.ip_address(remote)
+        except ValueError:
+            ip = None
+
+        if (
+            ip is not None
+            and self.allow_private_networks
+            and (ip.is_private or ip.is_loopback or ip.is_link_local)
+        ):
+            return True, "LOCAL", "private_network"
+
+        # Require multiple Cloudflare-origin headers before using CF-IPCountry.
+        # These are reliable when the public HA hostname is reachable only via
+        # Cloudflare/Tunnel. They must not be treated as cryptographic proof if
+        # the origin is separately exposed to the public Internet.
+        country = (request.headers.get("CF-IPCountry") or "").upper().strip()
+        cf_ray = request.headers.get("CF-Ray")
+        cf_connecting_ip = request.headers.get("CF-Connecting-IP")
+
+        if not cf_ray or not cf_connecting_ip:
+            return False, country or "UNKNOWN", "cloudflare_headers_missing"
+
+        if (
+            len(country) != 2
+            or not country.isalpha()
+            or country in {"XX"}
+        ):
+            return False, country or "UNKNOWN", "country_unknown"
+
+        if country in allowed:
+            return True, country, "allowed"
+
+        return False, country, "country_not_allowed"
+
     async def async_record(self, entry: AuditEntry) -> None:
         """Persist a credential-free security event."""
         await self.store.async_add_history(entry, self.history_limit)
@@ -215,12 +297,7 @@ class SecureQrLoginManager:
         session: LoginSession,
         supplied_secret: str,
     ) -> tuple[bool, bool]:
-        """Validate the device secret and lock the session after repeated failures.
-
-        Returns (valid, locked_now). Failed attempts are kept only in memory.
-        Once the threshold is reached the entire request is destroyed and its QR
-        is invalidated, limiting online probing even if a session id is known.
-        """
+        """Validate the device secret and lock the session after repeated failures."""
         if session.device_secret_valid(supplied_secret):
             session.device_secret_failures = 0
             return True, False
@@ -270,12 +347,28 @@ class SecureQrLoginManager:
         await self.async_record(AuditEntry(event=event, session_id=""))
         self._notify()
 
-    async def async_track_issued(self, session: LoginSession) -> None:
-        """Persist token metadata before reporting approval success.
+    async def async_update_settings(self, options: dict) -> None:
+        """Persist validated settings without reloading the integration.
 
-        This guarantees that a restart between approval and credential delivery
-        cannot leave an untracked valid refresh token behind.
+        Any open login window is closed before a policy change is committed so
+        no in-flight request can straddle two different security policies.
+        Delivered QR-created logins remain valid until explicitly revoked.
         """
+        if self.enabled or self.sessions:
+            await self.async_disable("settings_changed")
+
+        self.hass.config_entries.async_update_entry(
+            self.entry,
+            options=options,
+        )
+
+        # Apply a reduced history limit immediately.
+        del self.store.history[self.history_limit :]
+        await self.store.async_save(self.history_limit)
+        self._notify()
+
+    async def async_track_issued(self, session: LoginSession) -> None:
+        """Persist token metadata before reporting approval success."""
         if session.refresh_token is None:
             raise RuntimeError("Cannot track a session without a refresh token")
 
@@ -341,7 +434,6 @@ class SecureQrLoginManager:
 
     async def async_revoke_all_logins(self, *, actor_user_name: str = "") -> int:
         """Disable QR login and revoke every token created by this integration."""
-        # Disable first so no new request can race the bulk revocation.
         if self._disable_unsub:
             self._disable_unsub()
             self._disable_unsub = None
@@ -480,7 +572,6 @@ class SecureQrLoginManager:
             self._disable_unsub = None
         if self._cleanup_unsub:
             self._cleanup_unsub()
-        # Delivered refresh tokens remain valid across integration reloads.
         await self.async_purge_sessions(event="integration_unloaded")
 
     def new_session_expiry(self) -> float:
