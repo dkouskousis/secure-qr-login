@@ -6,8 +6,17 @@
   <title>Secure QR Login</title>
   <style>
     :root{font-family:system-ui,-apple-system,sans-serif;color-scheme:light dark}
-    body{margin:0;padding:24px;background:transparent}.wrap{max-width:720px;margin:auto}.card{background:#1c1c1c;border-radius:16px;padding:24px;margin-bottom:16px}
-    h1,h2{margin-top:0}.status{font-size:34px;font-weight:700}.muted{color:#aaa}button,a.button{border:0;border-radius:10px;padding:12px 18px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}.on{background:#03a9f4;color:#fff}.off{background:#444;color:#fff}.danger{color:#ff6b6b}.audit{font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap}
+    body{margin:0;padding:24px;background:transparent}
+    .wrap{max-width:980px;margin:auto}
+    .card{background:#1c1c1c;border-radius:16px;padding:24px;margin-bottom:16px}
+    h1,h2{margin-top:0}.status{font-size:34px;font-weight:700}.muted{color:#aaa}
+    .actions{display:flex;gap:10px;flex-wrap:wrap}
+    button,a.button{border:0;border-radius:10px;padding:11px 16px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}
+    .on{background:#03a9f4;color:#fff}.off{background:#444;color:#fff}.danger{color:#ff6b6b}.revoke{background:#7f1d1d;color:#fff}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:14px}
+    .metric{background:#262626;border-radius:10px;padding:12px}.metric strong{display:block;font-size:20px}
+    .tablewrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:10px;border-bottom:1px solid #333;vertical-align:top}th{color:#aaa;font-weight:600}
+    .agent{max-width:330px;word-break:break-word}.empty{padding:8px 0;color:#aaa}.small{font-size:12px}
   </style>
 </head>
 <body>
@@ -16,11 +25,42 @@
       <h1>Secure QR Login</h1>
       <div id="status" class="status">—</div>
       <p id="countdown" class="muted"></p>
-      <button id="enable" class="on">Enable for 3 minutes</button>
-      <button id="disable" class="off">Disable now</button>
-      <a class="button off" href="/secure_qr_login/start" target="_blank">Open login screen</a>
+      <div class="actions">
+        <button id="enable" class="on">Enable temporarily</button>
+        <button id="disable" class="off">Disable now</button>
+        <a class="button off" href="/secure_qr_login/start" target="_blank" rel="noopener">Open login screen</a>
+      </div>
+      <div class="grid">
+        <div class="metric"><span class="muted">Window</span><strong id="window">—</strong></div>
+        <div class="metric"><span class="muted">QR rotation</span><strong id="rotation">—</strong></div>
+        <div class="metric"><span class="muted">Pending</span><strong id="pending">—</strong></div>
+        <div class="metric"><span class="muted">Active logins</span><strong id="activeCount">—</strong></div>
+      </div>
+      <p class="muted small">Security settings, user allowlist and phone notifications are configured from Settings → Devices & services → Secure QR Login → Configure.</p>
     </div>
-    <div class="card"><h2>Recent security events</h2><div id="audit" class="audit muted">—</div></div>
+
+    <div class="card">
+      <h2>Active QR logins</h2>
+      <p class="muted">Only tokens created by this integration are shown. Revoking one signs that QR-created session out by removing its Home Assistant refresh token.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Account</th><th>IP</th><th>Browser</th><th>Signed in</th><th></th></tr></thead>
+          <tbody id="active"></tbody>
+        </table>
+      </div>
+      <div id="activeEmpty" class="empty" hidden>No active QR-created logins.</div>
+    </div>
+
+    <div class="card">
+      <h2>Security history</h2>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Time</th><th>Event</th><th>Account</th><th>IP</th><th>Details</th></tr></thead>
+          <tbody id="history"></tbody>
+        </table>
+      </div>
+      <div id="historyEmpty" class="empty" hidden>No history yet.</div>
+    </div>
   </div>
   <script src="/secure_qr_login/static/admin.js"></script>
 </body>
