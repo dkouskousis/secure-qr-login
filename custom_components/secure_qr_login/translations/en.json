@@ -3,11 +3,33 @@
     "step": {
       "user": {
         "title": "Secure QR Login",
-        "description": "Install Secure QR Login. The feature remains disabled until you enable its temporary three-minute window."
+        "description": "Install Secure QR Login. The feature remains disabled until an administrator opens its temporary login window."
       }
     },
     "abort": {
       "already_configured": "Secure QR Login is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Secure QR Login settings",
+        "description": "Security-sensitive settings are deliberately limited to conservative ranges.",
+        "data": {
+          "enable_window_seconds": "Login window duration (seconds)",
+          "qr_lifetime_seconds": "QR rotation interval (seconds)",
+          "max_pending_sessions": "Maximum pending login requests",
+          "history_limit": "History entries to retain",
+          "allowed_user_ids": "Users allowed to approve QR login",
+          "notify_services": "Notification targets",
+          "notify_on_approved": "Notify when a login is approved",
+          "notify_on_denied": "Notify when a login is denied"
+        },
+        "data_description": {
+          "allowed_user_ids": "Leave empty to allow all active non-system Home Assistant users. When populated, only selected users may approve a QR login for their own account.",
+          "notify_services": "Home Assistant notify services such as notify.mobile_app_phone. Notifications never contain authentication secrets."
+        }
+      }
     }
   }
 }
