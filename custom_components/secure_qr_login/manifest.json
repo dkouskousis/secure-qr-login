@@ -1,7 +1,7 @@
 {
   "domain": "secure_qr_login",
   "name": "Secure QR Login",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "config_flow": true,
   "documentation": "https://github.com/dkouskousis/secure-qr-login",
   "issue_tracker": "https://github.com/dkouskousis/secure-qr-login/issues",
@@ -14,7 +14,7 @@
   ],
   "requirements": [
     "segno==1.6.6",
-    "geoip2fast==1.2.2"
+    "maxminddb==3.2.0"
   ],
   "iot_class": "local_push",
   "integration_type": "service",
