@@ -239,45 +239,28 @@ class SecureQrLoginManager:
         return not allowlist or user.id in allowlist
 
     async def async_country_allowed(self, request) -> tuple[bool, str, str]:
-        """Evaluate the optional country allowlist.
+        """Evaluate the optional country allowlist from HA's accepted client IP.
 
-        Provider order:
-        1. Trusted Cloudflare headers, when present.
-        2. Home Assistant/Nabu Casa client IP resolved locally with GeoIP2Fast.
-        3. Optional LAN/private-network bypass for non-Nabu-Casa requests.
+        Home Assistant/Nabu Casa/reverse-proxy transport handling decides what
+        request.remote represents. This integration never trusts caller-supplied
+        country headers as an authentication input; the accepted client IP is
+        resolved locally with an offline GeoIP database.
 
-        GeoIP is only an additional policy layer; it never replaces normal
-        Home Assistant authentication, the temporary admin window, QR token or
+        GeoIP is only an additional policy layer. It never replaces Home
+        Assistant authentication, the temporary admin window, QR token or
         device-secret checks.
         """
         allowed = self.allowed_countries
         if not allowed:
             return True, "", "disabled"
 
-        country = (request.headers.get("CF-IPCountry") or "").upper().strip()
-        cf_ray = request.headers.get("CF-Ray")
-        cf_connecting_ip = request.headers.get("CF-Connecting-IP")
-        through_cloudflare = bool(cf_ray or cf_connecting_ip or country)
-
-        if through_cloudflare:
-            if not cf_ray or not cf_connecting_ip or len(country) != 2:
-                return False, country or "UNKNOWN", "cloudflare_headers_missing"
-
-            if country not in ISO_COUNTRY_CODES:
-                return False, country or "UNKNOWN", "country_unknown"
-
-            if country in allowed:
-                return True, country, "cloudflare_allowed"
-
-            return False, country, "country_not_allowed"
-
         nabu_request = is_nabu_casa_request()
         result = await self.geoip.async_lookup_ip(request.remote)
 
         if result.reason == "private_network":
-            # A Nabu Casa Remote UI request should carry the real public client
+            # A Nabu Casa Remote UI request should expose the real public client
             # address through SniTun. Never treat a private tunnel/relay address
-            # as a LAN bypass because that would disable country enforcement.
+            # as a LAN bypass because that would silently disable GeoIP policy.
             if nabu_request:
                 return False, "UNKNOWN", "nabu_client_ip_unavailable"
 
