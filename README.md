@@ -189,6 +189,8 @@ The integration performs the country lookup **locally** with the DB-IP Country L
 
 The database is downloaded from DB-IP and refreshed monthly. Updates are installed atomically only after the MMDB file has been decompressed, size-limited and validated. If an update fails, the last valid local database remains in use. DB-IP Country Lite is licensed under CC BY 4.0.
 
+The admin panel includes **Check for GeoIP update** for an immediate manual check. It shows the current database release, last update attempt, last successful update and the last update error. A failed update displays a warning such as **“GeoIP database update failed — still using 2026-09”** and records `geoip_update_failed` in Security History. Successful downloads record `geoip_update_success`; a manual check when the database is already current records `geoip_update_checked`.
+
 This supports:
 
 - Home Assistant Cloud / Nabu Casa Remote UI;
@@ -260,7 +262,7 @@ Country data is provided by **DB-IP Country Lite** and stored locally under Home
 
 ## Version
 
-Current integration version: **1.5.1**
+Current integration version: **1.5.2**
 
 ## License
 
