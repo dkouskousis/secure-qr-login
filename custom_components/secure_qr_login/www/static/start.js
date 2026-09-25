@@ -36,6 +36,12 @@
     if (data.error === 'origin_rejected') {
       return 'This request was rejected by the same-origin security policy.';
     }
+    if (data.error === 'country_not_allowed') {
+      if (data.reason === 'cloudflare_headers_missing') {
+        return 'Country restriction is enabled, but trusted Cloudflare GeoIP headers are missing.';
+      }
+      return `QR Login is not allowed from country ${data.country || 'unknown'}.`;
+    }
     return fallback;
   }
 
