@@ -145,3 +145,9 @@ def test_cloudflare_headers_override_private_proxy_remote_ip() -> None:
     assert not allowed
     assert country == "US"
     assert reason == "country_not_allowed"
+
+
+def test_invalid_country_codes_are_not_loaded_into_policy() -> None:
+    manager = manager_with({"allowed_countries": ["GR", "ZZ", "gr"]})
+
+    assert manager.allowed_countries == {"GR"}
