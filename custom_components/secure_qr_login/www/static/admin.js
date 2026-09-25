@@ -7,6 +7,10 @@
   const historyEmpty = document.getElementById('historyEmpty');
 
   let token = null;
+  let enabled = false;
+  let remainingSeconds = 0;
+  let lastSyncedAt = performance.now();
+
   try { token = JSON.parse(localStorage.getItem('hassTokens'))?.access_token || null; } catch {}
 
   const headers = (extra = {}) => token
@@ -19,6 +23,25 @@
     if (className) td.className = className;
     return td;
   };
+
+  function renderCountdown() {
+    if (!enabled) {
+      countdown.textContent = 'Off by default. No new QR sessions can be created.';
+      return;
+    }
+
+    const elapsed = Math.floor((performance.now() - lastSyncedAt) / 1000);
+    const left = Math.max(0, remainingSeconds - elapsed);
+    const minutes = Math.floor(left / 60);
+    const seconds = left % 60;
+    countdown.textContent = `${minutes}:${String(seconds).padStart(2, '0')} remaining`;
+
+    if (left === 0) {
+      enabled = false;
+      status.textContent = 'DISABLED';
+      status.className = 'status danger';
+    }
+  }
 
   function renderActive(items) {
     activeBody.replaceChildren();
@@ -77,11 +100,13 @@
     }
 
     const d = await r.json();
-    status.textContent = d.enabled ? 'ENABLED' : 'DISABLED';
-    status.className = 'status ' + (d.enabled ? '' : 'danger');
-    countdown.textContent = d.enabled
-      ? `${d.remaining_seconds}s remaining`
-      : 'Off by default. No new QR sessions can be created.';
+    enabled = Boolean(d.enabled);
+    remainingSeconds = Number(d.remaining_seconds || 0);
+    lastSyncedAt = performance.now();
+
+    status.textContent = enabled ? 'ENABLED' : 'DISABLED';
+    status.className = 'status ' + (enabled ? '' : 'danger');
+    renderCountdown();
 
     document.getElementById('window').textContent = `${d.window_seconds}s`;
     document.getElementById('rotation').textContent = `${d.qr_lifetime_seconds}s`;
@@ -92,11 +117,11 @@
     renderHistory(d.history || []);
   }
 
-  async function setEnabled(enabled) {
+  async function setEnabled(value) {
     await fetch('/api/secure_qr_login/admin/window', {
       method: 'POST',
       headers: headers({'Content-Type': 'application/json'}),
-      body: JSON.stringify({enabled}),
+      body: JSON.stringify({enabled: value}),
       cache: 'no-store'
     });
     await state();
@@ -117,5 +142,6 @@
   document.getElementById('disable').addEventListener('click', () => setEnabled(false));
 
   state();
-  setInterval(state, 2000);
+  setInterval(renderCountdown, 250);
+  setInterval(state, 5000);
 })();
