@@ -64,6 +64,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Ensure this run is still current
+        shell: bash
+        run: |
+          CURRENT_SHA="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [ "$CURRENT_SHA" != "$GITHUB_SHA" ]; then
+            echo "main moved to $CURRENT_SHA; skipping release from stale run $GITHUB_SHA."
+            exit 78
+          fi
+
       - name: Read integration version
         id: version
         shell: bash
