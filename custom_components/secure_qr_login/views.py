@@ -583,6 +583,9 @@ class AdminSettingsView(HomeAssistantView):
         notify_options = sorted(notify_domain)
 
         cf_country = (request.headers.get("CF-IPCountry") or "").upper().strip()
+        cf_ray_present = bool(request.headers.get("CF-Ray"))
+        cf_connecting_ip_present = bool(request.headers.get("CF-Connecting-IP"))
+        geoip_ready = bool(cf_country) and cf_ray_present and cf_connecting_ip_present
         return _json(
             self,
             {
@@ -603,9 +606,11 @@ class AdminSettingsView(HomeAssistantView):
                 "country_codes": sorted(ISO_COUNTRY_CODES),
                 "geoip": {
                     "source": "Cloudflare CF-IPCountry",
-                    "header_present": bool(cf_country),
+                    "ready": geoip_ready,
                     "current_country": cf_country or None,
-                    "cf_ray_present": bool(request.headers.get("CF-Ray")),
+                    "cf_ipcountry_present": bool(cf_country),
+                    "cf_ray_present": cf_ray_present,
+                    "cf_connecting_ip_present": cf_connecting_ip_present,
                 },
             },
         )
