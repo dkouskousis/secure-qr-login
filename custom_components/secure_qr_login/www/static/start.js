@@ -37,8 +37,11 @@
       return 'This request was rejected by the same-origin security policy.';
     }
     if (data.error === 'country_not_allowed') {
-      if (data.reason === 'cloudflare_headers_missing') {
-        return 'Country restriction is enabled, but trusted Cloudflare GeoIP headers are missing.';
+      if (data.reason === 'nabu_client_ip_unavailable') {
+        return 'Country restriction is enabled, but Nabu Casa did not provide a usable public client IP.';
+      }
+      if (['database_unavailable', 'lookup_failed', 'client_ip_missing', 'client_ip_invalid'].includes(data.reason)) {
+        return 'Country restriction is enabled, but local GeoIP resolution is unavailable.';
       }
       return `QR Login is not allowed from country ${data.country || 'unknown'}.`;
     }
