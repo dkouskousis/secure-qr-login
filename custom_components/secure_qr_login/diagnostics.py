@@ -43,6 +43,8 @@ async def async_get_config_entry_diagnostics(
         "history_event_counts": event_counts,
         "options": _safe_options(entry.options),
         "local_geoip_database_ready": manager.geoip.database_ready,
+        "local_geoip_database_release": manager.geoip.database_release,
+        "local_geoip_last_error": manager.geoip.last_error,
     }
 
 
