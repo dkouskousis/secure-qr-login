@@ -64,17 +64,21 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Ensure this run is still current
+      - name: Check whether this run is still current
+        id: current
         shell: bash
         run: |
           CURRENT_SHA="$(git ls-remote origin refs/heads/main | cut -f1)"
-          if [ "$CURRENT_SHA" != "$GITHUB_SHA" ]; then
-            echo "main moved to $CURRENT_SHA; skipping release from stale run $GITHUB_SHA."
-            exit 78
+          if [ "$CURRENT_SHA" = "$GITHUB_SHA" ]; then
+            echo "is_current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_current=false" >> "$GITHUB_OUTPUT"
+            echo "main moved to $CURRENT_SHA; stale run $GITHUB_SHA will not publish."
           fi
 
       - name: Read integration version
         id: version
+        if: steps.current.outputs.is_current == 'true'
         shell: bash
         run: |
           VERSION="$(python - <<'PY'
@@ -86,6 +90,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release if version is new
+        if: steps.current.outputs.is_current == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
