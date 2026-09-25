@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, ENABLE_WINDOW_SECONDS
+from .const import DOMAIN
 
 
 async def async_setup_entry(
@@ -21,7 +21,7 @@ async def async_setup_entry(
 
 
 class SecureQrLoginSwitch(SwitchEntity):
-    """Switch that always turns itself off after three minutes."""
+    """Admin-only switch with a bounded automatic timeout."""
 
     _attr_name = "Secure QR Login"
     _attr_icon = "mdi:qrcode-scan"
@@ -39,13 +39,17 @@ class SecureQrLoginSwitch(SwitchEntity):
     def extra_state_attributes(self):
         return {
             "remaining_seconds": self.manager.enabled_remaining,
-            "window_seconds": ENABLE_WINDOW_SECONDS,
+            "window_seconds": self.manager.enable_window_seconds,
+            "qr_lifetime_seconds": self.manager.qr_lifetime_seconds,
+            "pending_sessions": self.manager.pending_count,
+            "max_pending_sessions": self.manager.max_pending_sessions,
         }
 
     async def async_added_to_hass(self) -> None:
         @callback
         def changed() -> None:
             self.async_write_ha_state()
+
         self._remove_listener = self.manager.add_listener(changed)
 
     async def async_will_remove_from_hass(self) -> None:
@@ -53,10 +57,12 @@ class SecureQrLoginSwitch(SwitchEntity):
             self._remove_listener()
 
     async def _async_require_admin(self) -> None:
-        """Only an authenticated administrator may open or close the window."""
+        """Only an authenticated administrator may control the security window."""
         user_id = self._context.user_id
         if not user_id:
-            raise HomeAssistantError("Secure QR Login can only be controlled by an administrator")
+            raise HomeAssistantError(
+                "Secure QR Login can only be controlled by an administrator"
+            )
         user = await self.hass.auth.async_get_user(user_id)
         if user is None or not user.is_admin:
             raise HomeAssistantError("Administrator privileges are required")
