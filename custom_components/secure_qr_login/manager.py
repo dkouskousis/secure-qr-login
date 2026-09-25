@@ -570,6 +570,7 @@ class SecureQrLoginManager:
             self._disable_unsub = None
         if self._cleanup_unsub:
             self._cleanup_unsub()
+        await self.geoip.async_shutdown()
         await self.async_purge_sessions(event="integration_unloaded")
 
     def new_session_expiry(self) -> float:
