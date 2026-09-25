@@ -183,22 +183,28 @@ Saving settings closes any currently open QR-login window and cancels pending re
 
 ## Country restriction / GeoIP
 
-Country restriction is optional and is implemented as an additional policy layer using Cloudflare's `CF-IPCountry` request header.
+Country restriction is optional and is implemented as an additional policy layer using the client IP already accepted by Home Assistant's HTTP stack.
+
+The integration performs the country lookup **locally** with a pinned IPv4+IPv6 GeoIP database. Client IP addresses are not sent to a third-party GeoIP lookup API.
+
+This supports:
+
+- Home Assistant Cloud / Nabu Casa Remote UI;
+- correctly configured Cloudflare Tunnel/reverse proxies;
+- direct public access;
+- optional private/LAN bypass for local clients.
 
 When an allowed-country list is configured:
 
-- the requesting browser must come from one of the configured two-letter country codes;
+- the requesting browser must resolve to one of the configured ISO-3166-1 alpha-2 countries;
 - `/start`, `/qr`, and `/status` are all country-checked;
-- public requests fail closed if the expected Cloudflare headers are missing;
-- local/private clients may optionally bypass GeoIP because local traffic does not normally pass through Cloudflare.
+- unknown/unresolvable public clients fail closed;
+- private/LAN clients are denied unless **Allow private / local network clients** is explicitly enabled;
+- Nabu Casa requests never receive the private-network bypass if the tunnel exposes only a private relay address.
 
-Cloudflare IP Geolocation (or the Add visitor location headers Managed Transform) must be enabled so the origin receives `CF-IPCountry`.
+Nabu Casa Remote UI uses a secure tunnel rather than Home Assistant's traditional reverse-proxy configuration. Home Assistant explicitly excludes Remote UI traffic from normal X-Forwarded-For processing, while current SniTun supports forwarding the real client IP through the tunnel transport. The integration uses the resulting `request.remote` value and then resolves it locally.
 
-The implementation also requires `CF-Ray` and `CF-Connecting-IP` before trusting `CF-IPCountry`. If Cloudflare headers are present, they take precedence over `request.remote`; this prevents a private cloudflared/reverse-proxy address from accidentally bypassing the country policy.
-
-GeoIP is not an authentication factor and should not be treated as exact location proof. It remains secondary to the integration's QR, device-secret, admin-window and Home Assistant authentication controls.
-
-For the country header to be meaningful, the public Home Assistant origin should not also be directly exposed to the Internet outside Cloudflare/Tunnel, because HTTP request headers are not cryptographic proof on a directly reachable origin.
+GeoIP is not an authentication factor and should not be treated as exact location proof. It remains secondary to the integration's temporary admin window, rotating QR token, device secret and Home Assistant authentication controls.
 
 ## Installation
 
@@ -221,11 +227,13 @@ For the country header to be meaningful, the public Home Assistant origin should
 6. The requesting browser receives the credentials once and opens Home Assistant.
 7. The new QR-created login appears under **Active QR logins** and can be revoked later.
 
-## Reverse proxies / Cloudflare
+## Nabu Casa / reverse proxies / tunnels
 
-Use HTTPS and a correctly configured Home Assistant reverse proxy. Home Assistant's normal trusted-proxy configuration remains your responsibility.
+Nabu Casa Remote UI works without Home Assistant's traditional trusted-proxy settings.
 
-The strict same-origin check compares the browser `Origin` to the host seen by Home Assistant, so proxy host/scheme handling must be configured correctly.
+For traditional reverse proxies or Cloudflare Tunnel, configure Home Assistant so `request.remote` represents the real visitor address. Home Assistant's trusted-proxy configuration remains your responsibility.
+
+The strict same-origin check compares the browser `Origin` to the host seen by Home Assistant, so proxy host/scheme handling must also be correct.
 
 ## Why there is no reCAPTCHA
 
@@ -238,17 +246,17 @@ The feature is unavailable while disabled and combines:
 - per-IP/global rate limits
 - hard pending-session limits
 - repeated-secret-failure lockout
-- optional Cloudflare-backed country restriction
+- optional local GeoIP country restriction (Nabu Casa / proxy / direct access)
 
 Adding reCAPTCHA would introduce an external dependency and additional browser data sharing without strengthening the core authentication boundary.
 
 ## Dependency
 
-QR SVG generation uses `segno==1.6.6`, pinned in `manifest.json`.
+QR SVG generation uses `segno==1.6.6`. Local country resolution uses `geoip2fast==1.2.2` with its bundled IPv4+IPv6 database. Both are pinned in `manifest.json`.
 
 ## Version
 
-Current integration version: **1.4.0**
+Current integration version: **1.5.0**
 
 ## License
 
