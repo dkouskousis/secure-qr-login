@@ -260,15 +260,82 @@ async def test_clear_history_keeps_active_login_and_revoke_all_removes_it(
     assert qr_manager.active_logins == {}
 
 
-async def test_country_allowlist_allows_matching_cloudflare_country(
+async def test_country_allowlist_allows_matching_local_geoip(
     hass_client,
     qr_manager,
+    monkeypatch,
 ) -> None:
-    """A matching CF-IPCountry may start a QR login."""
+    """A matching local GeoIP country may start a QR login."""
+    from custom_components.secure_qr_login.geoip import GeoIPResult
+
     qr_manager.entry.options = {
         "allowed_countries": ["GR"],
         "allow_private_networks": False,
     }
+
+    async def fake_lookup(_ip):
+        return GeoIPResult("GR", "local_database", "8.8.8.8", "resolved")
+
+    monkeypatch.setattr(qr_manager.geoip, "async_lookup_ip", fake_lookup)
+    qr_manager.enabled_until = time.time() + 180
+    client = await hass_client()
+
+    response = await client.post(
+        "/api/secure_qr_login/start",
+        json={},
+        headers={"Origin": _origin(client)},
+    )
+
+    assert response.status == 200
+
+
+async def test_country_allowlist_denies_non_matching_local_geoip(
+    hass_client,
+    qr_manager,
+    monkeypatch,
+) -> None:
+    """A non-matching local GeoIP country is rejected before session creation."""
+    from custom_components.secure_qr_login.geoip import GeoIPResult
+
+    qr_manager.entry.options = {
+        "allowed_countries": ["GR"],
+        "allow_private_networks": False,
+    }
+
+    async def fake_lookup(_ip):
+        return GeoIPResult("US", "local_database", "8.8.8.8", "resolved")
+
+    monkeypatch.setattr(qr_manager.geoip, "async_lookup_ip", fake_lookup)
+    qr_manager.enabled_until = time.time() + 180
+    client = await hass_client()
+
+    response = await client.post(
+        "/api/secure_qr_login/start",
+        json={},
+        headers={"Origin": _origin(client)},
+    )
+
+    assert response.status == 403
+    payload = await response.json()
+    assert payload["error"] == "country_not_allowed"
+    assert payload["country"] == "US"
+    assert not qr_manager.sessions
+
+
+async def test_spoofed_cloudflare_country_header_does_not_override_local_geoip(
+    hass_client,
+    qr_manager,
+    monkeypatch,
+) -> None:
+    """Caller-provided country headers are not trusted as policy input."""
+    from custom_components.secure_qr_login.geoip import GeoIPResult
+
+    qr_manager.entry.options = {"allowed_countries": ["GR"]}
+
+    async def fake_lookup(_ip):
+        return GeoIPResult("US", "local_database", "8.8.8.8", "resolved")
+
+    monkeypatch.setattr(qr_manager.geoip, "async_lookup_ip", fake_lookup)
     qr_manager.enabled_until = time.time() + 180
     client = await hass_client()
 
@@ -278,42 +345,13 @@ async def test_country_allowlist_allows_matching_cloudflare_country(
         headers={
             "Origin": _origin(client),
             "CF-IPCountry": "GR",
-            "CF-Ray": "test-ATH",
-            "CF-Connecting-IP": "8.8.8.8",
-        },
-    )
-
-    assert response.status == 200
-
-
-async def test_country_allowlist_denies_non_matching_cloudflare_country(
-    hass_client,
-    qr_manager,
-) -> None:
-    """A non-matching CF-IPCountry is rejected before session creation."""
-    qr_manager.entry.options = {
-        "allowed_countries": ["GR"],
-        "allow_private_networks": False,
-    }
-    qr_manager.enabled_until = time.time() + 180
-    client = await hass_client()
-
-    response = await client.post(
-        "/api/secure_qr_login/start",
-        json={},
-        headers={
-            "Origin": _origin(client),
-            "CF-IPCountry": "US",
-            "CF-Ray": "test-IAD",
-            "CF-Connecting-IP": "8.8.8.8",
+            "CF-Ray": "fake",
+            "CF-Connecting-IP": "1.1.1.1",
         },
     )
 
     assert response.status == 403
-    payload = await response.json()
-    assert payload["error"] == "country_not_allowed"
-    assert payload["country"] == "US"
-    assert not qr_manager.sessions
+    assert (await response.json())["country"] == "US"
 
 
 async def test_admin_settings_api_saves_validated_values(
