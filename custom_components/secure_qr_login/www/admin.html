@@ -80,9 +80,9 @@
 
       <h3>Country restriction</h3>
       <p class="muted small">
-        Uses Cloudflare country headers when available. With Nabu Casa or direct access,
-        the client IP is resolved locally inside Home Assistant using an offline GeoIP database.
-        Leave the list empty to disable country filtering.
+        The client IP accepted by Home Assistant is resolved locally using an offline IPv4/IPv6 GeoIP database.
+        This works with Nabu Casa Remote UI and correctly configured reverse proxies/tunnels.
+        No client IP is sent to an external GeoIP lookup service. Leave the list empty to disable country filtering.
       </p>
 
       <label class="field">
