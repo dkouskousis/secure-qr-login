@@ -59,7 +59,7 @@ def test_same_origin_rejects_different_host_and_lookalike() -> None:
     assert request_origin(_request("https://evil.example.com")) == ""
 
 
-def test_originless_request_is_allowed_but_not_trusted_as_client_id() -> None:
+def test_originless_request_is_rejected() -> None:
     request = _request(None)
-    assert same_origin_request(request)
+    assert not same_origin_request(request)
     assert request_origin(request) == ""
