@@ -43,7 +43,7 @@ from .const import (
     MIN_QR_LIFETIME_SECONDS,
     ISO_COUNTRY_CODES,
 )
-from .geoip import LocalGeoIPResolver, is_nabu_casa_request
+from .geoip import GeoIPUpdateResult, LocalGeoIPResolver, is_nabu_casa_request
 from .models import ActiveLogin, AuditEntry, LoginSession
 from .notifications import async_send_security_notification
 from .storage import PersistentSecurityStore
@@ -57,7 +57,7 @@ class SecureQrLoginManager:
         self.entry = entry
         self.sessions: dict[str, LoginSession] = {}
         self.store = PersistentSecurityStore(hass)
-        self.geoip = LocalGeoIPResolver(hass)
+        self.geoip = LocalGeoIPResolver(hass, self._async_geoip_update_event)
         self.enabled_until = 0.0
         self._disable_unsub: Callable[[], None] | None = None
         self._listeners: set[Callable[[], None]] = set()
@@ -281,6 +281,55 @@ class SecureQrLoginManager:
 
         return False, result.country_code, "country_not_allowed"
 
+
+    async def _async_geoip_update_event(
+        self,
+        result: GeoIPUpdateResult,
+        trigger: str,
+    ) -> None:
+        """Record meaningful automatic GeoIP maintenance outcomes."""
+        if result.updated:
+            await self.async_record(
+                AuditEntry(
+                    event="geoip_update_success",
+                    session_id="",
+                    detail=f"trigger={trigger};release={result.release or 'unknown'}",
+                )
+            )
+        elif not result.success:
+            await self.async_record(
+                AuditEntry(
+                    event="geoip_update_failed",
+                    session_id="",
+                    detail=(
+                        f"trigger={trigger};release={result.release or 'unknown'};"
+                        f"error={result.error or 'unknown'}"
+                    ),
+                )
+            )
+
+    async def async_manual_geoip_update(self) -> GeoIPUpdateResult:
+        """Run an admin-requested GeoIP update check and audit the result."""
+        result = await self.geoip.async_force_update()
+        if result.updated:
+            event = "geoip_update_success"
+        elif result.success:
+            event = "geoip_update_checked"
+        else:
+            event = "geoip_update_failed"
+
+        await self.async_record(
+            AuditEntry(
+                event=event,
+                session_id="",
+                detail=(
+                    f"trigger=manual;status={result.status};"
+                    f"release={result.release or 'unknown'};"
+                    f"error={result.error or 'none'}"
+                ),
+            )
+        )
+        return result
 
     async def async_record(self, entry: AuditEntry) -> None:
         """Persist a credential-free security event."""
