@@ -56,4 +56,7 @@ def _safe_options(options: dict[str, Any]) -> dict[str, Any]:
         "notify_service_count": len(options.get("notify_services", [])),
         "notify_on_approved": options.get("notify_on_approved", True),
         "notify_on_denied": options.get("notify_on_denied", True),
+        "allowed_country_count": len(options.get("allowed_countries", [])),
+        "allow_private_networks": options.get("allow_private_networks", True),
+        "geoip_source": "cloudflare_cf_ipcountry",
     }
