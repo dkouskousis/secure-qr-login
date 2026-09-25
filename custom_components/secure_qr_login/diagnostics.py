@@ -42,6 +42,7 @@ async def async_get_config_entry_diagnostics(
         "history_entry_count": len(history),
         "history_event_counts": event_counts,
         "options": _safe_options(entry.options),
+        "local_geoip_database_ready": manager.geoip.database_ready,
     }
 
 
@@ -58,5 +59,5 @@ def _safe_options(options: dict[str, Any]) -> dict[str, Any]:
         "notify_on_denied": options.get("notify_on_denied", True),
         "allowed_country_count": len(options.get("allowed_countries", [])),
         "allow_private_networks": options.get("allow_private_networks", False),
-        "geoip_source": "cloudflare_cf_ipcountry",
+        "geoip_sources": ["cloudflare_cf_ipcountry", "local_geoip_database"],
     }
