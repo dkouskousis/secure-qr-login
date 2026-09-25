@@ -195,9 +195,19 @@
     );
 
     const geo = d.geoip || {};
-    document.getElementById('geoStatus').textContent = geo.ready
-      ? `Cloudflare GeoIP is ready. Current request country: ${geo.current_country || 'unknown'}.`
-      : 'Complete Cloudflare GeoIP headers are not present on this admin request. Enable IP Geolocation / visitor location headers in Cloudflare before enabling a country allowlist.';
+    let geoText = 'Country filtering is available.';
+    if (geo.provider === 'cloudflare' && geo.cloudflare_ready) {
+      geoText = `Provider: Cloudflare · Current country: ${geo.current_country || 'unknown'}.`;
+    } else if (geo.provider === 'nabu_casa') {
+      geoText = geo.client_ip_available && geo.local_database_ready
+        ? `Provider: Nabu Casa + local GeoIP database · Current country: ${geo.current_country || 'unknown'}.`
+        : 'Nabu Casa request detected, but a usable public client IP or local GeoIP result is not available. Country filtering will fail closed.';
+    } else if (geo.local_database_ready) {
+      geoText = `Provider: local GeoIP database · Current country: ${geo.current_country || 'unknown'}.`;
+    } else {
+      geoText = 'Local GeoIP database is not ready. Country filtering will fail closed until it can be loaded.';
+    }
+    document.getElementById('geoStatus').textContent = geoText;
   }
 
   async function saveSettings() {
