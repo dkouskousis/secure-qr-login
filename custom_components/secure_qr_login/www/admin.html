@@ -26,22 +26,85 @@
         <div class="metric"><span class="muted">Active logins</span><strong id="activeCount">—</strong></div>
       </div>
 
-      <p class="muted small">
-        Security settings, user allowlist and phone notifications are configured from
-        Settings → Devices & services → Secure QR Login → Configure.
-      </p>
-
       <div class="version">
         Integration <span id="version">—</span> · Build <span id="build">—</span>
       </div>
     </div>
 
     <div class="card">
-      <h2>Active QR logins</h2>
-      <p class="muted">
-        Only tokens created by this integration are shown. Revoking one removes its
-        Home Assistant refresh token.
+      <h2>Settings</h2>
+      <p class="muted small">
+        Saving settings closes any currently open QR-login window and cancels pending requests.
+        Existing delivered logins are not revoked.
       </p>
+
+      <div class="form-grid">
+        <label>
+          <span>Login window (seconds)</span>
+          <input id="settingWindow" type="number" min="60" max="300" step="10">
+        </label>
+
+        <label>
+          <span>QR rotation (seconds)</span>
+          <input id="settingQr" type="number" min="5" max="30" step="1">
+        </label>
+
+        <label>
+          <span>Maximum pending sessions</span>
+          <input id="settingPending" type="number" min="1" max="5" step="1">
+        </label>
+
+        <label>
+          <span>History entries</span>
+          <input id="settingHistory" type="number" min="20" max="200" step="10">
+        </label>
+      </div>
+
+      <label class="field">
+        <span>Allowed users</span>
+        <select id="settingUsers" multiple size="5"></select>
+        <small>Leave empty to allow all active non-system Home Assistant users.</small>
+      </label>
+
+      <label class="field">
+        <span>Notification targets</span>
+        <select id="settingNotify" multiple size="5"></select>
+      </label>
+
+      <div class="check-grid">
+        <label><input id="settingNotifyApproved" type="checkbox"> Notify on approved login</label>
+        <label><input id="settingNotifyDenied" type="checkbox"> Notify on denied login</label>
+      </div>
+
+      <hr>
+
+      <h3>Country restriction</h3>
+      <p class="muted small">
+        Uses Cloudflare <code>CF-IPCountry</code>. Leave empty to disable country filtering.
+        Enter ISO two-letter country codes separated by commas, for example <code>GR, DE, FR</code>.
+      </p>
+
+      <label class="field">
+        <span>Allowed countries</span>
+        <input id="settingCountries" type="text" autocomplete="off" placeholder="GR, DE, FR">
+      </label>
+
+      <label class="check-row">
+        <input id="settingPrivate" type="checkbox">
+        Allow private / local network clients without GeoIP
+      </label>
+
+      <div id="geoStatus" class="notice muted"></div>
+      <div id="settingsMessage" class="notice"></div>
+
+      <div class="actions">
+        <button id="saveSettings" class="on">Save settings</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Active QR logins</h2>
+      <p class="muted">Only tokens created by this integration are shown.</p>
 
       <div class="actions">
         <button id="revokeAll" class="destructive">Revoke all QR logins</button>
@@ -49,15 +112,7 @@
 
       <div class="tablewrap">
         <table>
-          <thead>
-            <tr>
-              <th>Account</th>
-              <th>IP</th>
-              <th>Browser</th>
-              <th>Signed in</th>
-              <th></th>
-            </tr>
-          </thead>
+          <thead><tr><th>Account</th><th>IP</th><th>Browser</th><th>Signed in</th><th></th></tr></thead>
           <tbody id="active"></tbody>
         </table>
       </div>
@@ -72,15 +127,7 @@
 
       <div class="tablewrap">
         <table>
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Event</th>
-              <th>Account</th>
-              <th>IP</th>
-              <th>Details</th>
-            </tr>
-          </thead>
+          <thead><tr><th>Time</th><th>Event</th><th>Account</th><th>IP</th><th>Details</th></tr></thead>
           <tbody id="history"></tbody>
         </table>
       </div>
