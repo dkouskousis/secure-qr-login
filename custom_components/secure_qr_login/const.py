@@ -2,7 +2,7 @@
 
 DOMAIN = "secure_qr_login"
 NAME = "Secure QR Login"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 PLATFORMS = ["switch"]
 
@@ -35,6 +35,10 @@ MIN_MAX_PENDING_SESSIONS = 1
 MAX_MAX_PENDING_SESSIONS = 5
 MIN_HISTORY_LIMIT = 20
 MAX_HISTORY_LIMIT = 200
+
+# A stolen/guessed session id still cannot retrieve credentials without the
+# device secret. Repeated failures destroy the session to limit online probing.
+MAX_DEVICE_SECRET_FAILURES = 5
 
 START_LIMIT_PER_IP = 6
 START_LIMIT_WINDOW_SECONDS = 60
