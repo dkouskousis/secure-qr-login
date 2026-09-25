@@ -39,15 +39,16 @@ The QR token can approve or deny a request, but it cannot retrieve credentials. 
 
 ## Companion App
 
-The approval page supports the Home Assistant Companion App:
+The approval page and the QR Login admin panel support the Home Assistant Companion App:
 
 - `homeassistant://navigate/...` deep-link handoff.
 - Android `externalAppV2` bridge.
 - Android legacy `externalApp` fallback.
 - iOS `webkit.messageHandlers.getExternalAuth`.
-- The integration requests only a temporary access token from the app.
+- The integration requests only a temporary access token from the app through the official external-auth bridge.
 - The Companion App refresh token is never exposed to or stored by Secure QR Login.
-- Browser OAuth remains available as a fallback.
+- The admin panel also checks Home Assistant's in-memory token cache before falling back to browser token storage.
+- Browser OAuth remains available as a fallback for approval.
 
 ## User allowlist
 
@@ -262,7 +263,7 @@ Country data is provided by **DB-IP Country Lite** and stored locally under Home
 
 ## Version
 
-Current integration version: **1.5.2**
+Current integration version: **1.5.3**
 
 ## License
 
