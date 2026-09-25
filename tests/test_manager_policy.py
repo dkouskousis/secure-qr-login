@@ -11,7 +11,7 @@ def manager_with(options: dict) -> SecureQrLoginManager:
     return manager
 
 
-def request(remote="198.51.100.10", **headers):
+def request(remote="8.8.8.8", **headers):
     return SimpleNamespace(remote=remote, headers=headers)
 
 
@@ -75,7 +75,7 @@ def test_cloudflare_allowed_country() -> None:
             **{
                 "CF-IPCountry": "GR",
                 "CF-Ray": "abc-ATH",
-                "CF-Connecting-IP": "198.51.100.10",
+                "CF-Connecting-IP": "8.8.8.8",
             }
         )
     )
@@ -93,7 +93,7 @@ def test_cloudflare_denied_country() -> None:
             **{
                 "CF-IPCountry": "US",
                 "CF-Ray": "abc-IAD",
-                "CF-Connecting-IP": "198.51.100.10",
+                "CF-Connecting-IP": "8.8.8.8",
             }
         )
     )
@@ -137,7 +137,7 @@ def test_cloudflare_headers_override_private_proxy_remote_ip() -> None:
             **{
                 "CF-IPCountry": "US",
                 "CF-Ray": "abc-IAD",
-                "CF-Connecting-IP": "198.51.100.10",
+                "CF-Connecting-IP": "8.8.8.8",
             },
         )
     )
