@@ -615,6 +615,8 @@ class AdminSettingsView(HomeAssistantView):
                     "resolution_reason": local_result.reason,
                     "local_database_ready": manager.geoip.database_ready,
                     "local_database_source": manager.geoip.source_info,
+                    "local_database_release": manager.geoip.database_release,
+                    "local_database_error": manager.geoip.last_error,
                 },
             },
         )
