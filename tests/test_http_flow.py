@@ -258,3 +258,59 @@ async def test_clear_history_keeps_active_login_and_revoke_all_removes_it(
     assert payload["count"] == 1
     assert not qr_manager.enabled
     assert qr_manager.active_logins == {}
+
+
+async def test_country_allowlist_allows_matching_cloudflare_country(
+    hass_client,
+    qr_manager,
+) -> None:
+    """A matching CF-IPCountry may start a QR login."""
+    qr_manager.entry.options = {
+        "allowed_countries": ["GR"],
+        "allow_private_networks": False,
+    }
+    qr_manager.enabled_until = time.time() + 180
+    client = await hass_client()
+
+    response = await client.post(
+        "/api/secure_qr_login/start",
+        json={},
+        headers={
+            "Origin": _origin(client),
+            "CF-IPCountry": "GR",
+            "CF-Ray": "test-ATH",
+            "CF-Connecting-IP": "8.8.8.8",
+        },
+    )
+
+    assert response.status == 200
+
+
+async def test_country_allowlist_denies_non_matching_cloudflare_country(
+    hass_client,
+    qr_manager,
+) -> None:
+    """A non-matching CF-IPCountry is rejected before session creation."""
+    qr_manager.entry.options = {
+        "allowed_countries": ["GR"],
+        "allow_private_networks": False,
+    }
+    qr_manager.enabled_until = time.time() + 180
+    client = await hass_client()
+
+    response = await client.post(
+        "/api/secure_qr_login/start",
+        json={},
+        headers={
+            "Origin": _origin(client),
+            "CF-IPCountry": "US",
+            "CF-Ray": "test-IAD",
+            "CF-Connecting-IP": "8.8.8.8",
+        },
+    )
+
+    assert response.status == 403
+    payload = await response.json()
+    assert payload["error"] == "country_not_allowed"
+    assert payload["country"] == "US"
+    assert not qr_manager.sessions
