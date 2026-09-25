@@ -28,6 +28,7 @@ from .const import (
     DEFAULT_NOTIFY_ON_DENIED,
     DEFAULT_NOTIFY_SERVICES,
     DEFAULT_QR_LIFETIME_SECONDS,
+    MAX_DEVICE_SECRET_FAILURES,
     MAX_ENABLE_WINDOW_SECONDS,
     MAX_HISTORY_LIMIT,
     MAX_MAX_PENDING_SESSIONS,
@@ -209,6 +210,38 @@ class SecureQrLoginManager:
         await self.store.async_add_history(entry, self.history_limit)
         self._notify()
 
+    async def async_validate_device_secret(
+        self,
+        session: LoginSession,
+        supplied_secret: str,
+    ) -> tuple[bool, bool]:
+        """Validate the device secret and lock the session after repeated failures.
+
+        Returns (valid, locked_now). Failed attempts are kept only in memory.
+        Once the threshold is reached the entire request is destroyed and its QR
+        is invalidated, limiting online probing even if a session id is known.
+        """
+        if session.device_secret_valid(supplied_secret):
+            session.device_secret_failures = 0
+            return True, False
+
+        session.device_secret_failures += 1
+        if session.device_secret_failures < MAX_DEVICE_SECRET_FAILURES:
+            return False, False
+
+        session.invalidate_qr()
+        session.status = "locked"
+        self.sessions.pop(session.session_id, None)
+        await self.async_record(
+            AuditEntry(
+                event="session_locked",
+                session_id=session.session_id,
+                client_ip=session.client_ip,
+                detail="too_many_invalid_device_secrets",
+            )
+        )
+        return False, True
+
     async def async_enable(self) -> None:
         """Open a fresh bounded login window."""
         if self._disable_unsub:
@@ -306,6 +339,46 @@ class SecureQrLoginManager:
         )
         return True
 
+    async def async_revoke_all_logins(self, *, actor_user_name: str = "") -> int:
+        """Disable QR login and revoke every token created by this integration."""
+        # Disable first so no new request can race the bulk revocation.
+        if self._disable_unsub:
+            self._disable_unsub()
+            self._disable_unsub = None
+        self.enabled_until = 0.0
+        await self.async_purge_sessions(event="revoke_all")
+
+        revoked = 0
+        for login_id, record in list(self.store.active.items()):
+            refresh_token = self.hass.auth.async_get_refresh_token(
+                record.refresh_token_id
+            )
+            if refresh_token is not None:
+                await async_revoke_refresh_token(self.hass, refresh_token)
+            self.store.active.pop(login_id, None)
+            revoked += 1
+
+        await self.store.async_save(self.history_limit)
+        await self.async_record(
+            AuditEntry(
+                event="all_tokens_revoked",
+                session_id="",
+                detail=(
+                    f"count={revoked};revoked_by={actor_user_name}"
+                    if actor_user_name
+                    else f"count={revoked}"
+                ),
+            )
+        )
+        self._notify()
+        return revoked
+
+    async def async_clear_history(self) -> None:
+        """Clear persistent audit history without touching any active login."""
+        self.store.history.clear()
+        await self.store.async_save(self.history_limit)
+        self._notify()
+
     async def async_get_active_public(self) -> list[dict]:
         """Return active QR logins and prune tokens revoked elsewhere."""
         changed = False
@@ -364,6 +437,7 @@ class SecureQrLoginManager:
             if session.refresh_token is not None and not session.consumed:
                 await async_revoke_refresh_token(self.hass, session.refresh_token)
                 self.store.active.pop(session.session_id, None)
+            session.invalidate_qr()
             await self.async_record(
                 AuditEntry(
                     event=event,
@@ -386,6 +460,7 @@ class SecureQrLoginManager:
             if session.refresh_token is not None and not session.consumed:
                 await async_revoke_refresh_token(self.hass, session.refresh_token)
                 self.store.active.pop(session.session_id, None)
+            session.invalidate_qr()
             await self.async_record(
                 AuditEntry(
                     event="session_expired",
