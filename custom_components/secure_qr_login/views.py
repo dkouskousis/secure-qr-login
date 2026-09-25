@@ -9,6 +9,7 @@ Security model
 * QR bearer tokens rotate frequently and can approve/deny only.
 * Credential retrieval is single-use and requires the device secret.
 * Repeated invalid device-secret attempts destroy the target session.
+* Optional country restriction is an additional Cloudflare-backed policy layer.
 * Issued refresh tokens are persisted only by their non-secret internal id so
   administrators can revoke them later and orphaned tokens can be cleaned up.
 """
@@ -28,9 +29,37 @@ from homeassistant.core import HomeAssistant
 
 from .auth import async_issue_tokens, async_revoke_refresh_token
 from .const import (
+    CONF_ALLOWED_COUNTRIES,
+    CONF_ALLOWED_USER_IDS,
+    CONF_ALLOW_PRIVATE_NETWORKS,
+    CONF_ENABLE_WINDOW_SECONDS,
+    CONF_HISTORY_LIMIT,
+    CONF_MAX_PENDING_SESSIONS,
+    CONF_NOTIFY_ON_APPROVED,
+    CONF_NOTIFY_ON_DENIED,
+    CONF_NOTIFY_SERVICES,
+    CONF_QR_LIFETIME_SECONDS,
+    DEFAULT_ALLOWED_COUNTRIES,
+    DEFAULT_ALLOWED_USER_IDS,
+    DEFAULT_ALLOW_PRIVATE_NETWORKS,
+    DEFAULT_ENABLE_WINDOW_SECONDS,
+    DEFAULT_HISTORY_LIMIT,
+    DEFAULT_MAX_PENDING_SESSIONS,
+    DEFAULT_NOTIFY_ON_APPROVED,
+    DEFAULT_NOTIFY_ON_DENIED,
+    DEFAULT_NOTIFY_SERVICES,
+    DEFAULT_QR_LIFETIME_SECONDS,
     DOMAIN,
     GLOBAL_START_LIMIT,
     GLOBAL_START_WINDOW_SECONDS,
+    MAX_ENABLE_WINDOW_SECONDS,
+    MAX_HISTORY_LIMIT,
+    MAX_MAX_PENDING_SESSIONS,
+    MAX_QR_LIFETIME_SECONDS,
+    MIN_ENABLE_WINDOW_SECONDS,
+    MIN_HISTORY_LIMIT,
+    MIN_MAX_PENDING_SESSIONS,
+    MIN_QR_LIFETIME_SECONDS,
     START_LIMIT_PER_IP,
     START_LIMIT_WINDOW_SECONDS,
     STATUS_LIMIT_PER_IP,
@@ -99,6 +128,23 @@ def _reject_cross_origin(view: HomeAssistantView, request: web.Request):
     return _json(view, {"error": "origin_rejected"}, 403)
 
 
+def _reject_country(view: HomeAssistantView, request: web.Request, manager):
+    """Enforce the optional country allowlist on the requesting browser."""
+    allowed, country, reason = manager.country_allowed(request)
+    if allowed:
+        return None
+
+    return _json(
+        view,
+        {
+            "error": "country_not_allowed",
+            "country": country,
+            "reason": reason,
+        },
+        403,
+    )
+
+
 def _client_ip(request: web.Request) -> str:
     return request.remote or "unknown"
 
@@ -134,6 +180,28 @@ async def _validate_device_secret(
     return _json(view, {"error": "invalid_session_secret"}, 403)
 
 
+def _validate_int(
+    payload: dict,
+    key: str,
+    minimum: int,
+    maximum: int,
+) -> int | None:
+    value = payload.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    if not minimum <= value <= maximum:
+        return None
+    return value
+
+
+def _validate_string_list(value, *, maximum: int = 256) -> list[str] | None:
+    if not isinstance(value, list) or len(value) > maximum:
+        return None
+    if not all(isinstance(item, str) for item in value):
+        return None
+    return list(dict.fromkeys(value))
+
+
 class StartView(HomeAssistantView):
     url = "/api/secure_qr_login/start"
     name = "api:secure_qr_login:start"
@@ -146,6 +214,8 @@ class StartView(HomeAssistantView):
         manager = _manager(request)
         if manager is None or not manager.enabled:
             return _json(self, {"error": "disabled"}, 503)
+        if rejected := _reject_country(self, request, manager):
+            return rejected
 
         ip = _client_ip(request)
         if (
@@ -202,6 +272,8 @@ class QrView(HomeAssistantView):
         manager = _manager(request)
         if manager is None or not manager.enabled:
             return _json(self, {"error": "disabled"}, 503)
+        if rejected := _reject_country(self, request, manager):
+            return rejected
 
         payload = await _json_body(request)
         if payload is None:
@@ -270,6 +342,8 @@ class StatusView(HomeAssistantView):
         manager = _manager(request)
         if manager is None or not manager.enabled:
             return _json(self, {"error": "disabled"}, 503)
+        if rejected := _reject_country(self, request, manager):
+            return rejected
 
         payload = await _json_body(request)
         if payload is None:
@@ -301,8 +375,6 @@ class StatusView(HomeAssistantView):
             manager.sessions.pop(session_id, None)
             return _json(self, {"error": "already_consumed"}, 410)
 
-        # Persist delivery before exposing any credentials. If persistence fails,
-        # revoke the newly-created token and fail closed.
         try:
             await manager.async_mark_consumed(session)
         except Exception:
@@ -324,9 +396,6 @@ class StatusView(HomeAssistantView):
             "token_expires_in": session.token_expires_in,
         }
         manager.sessions.pop(session_id, None)
-
-        # Remove credential references from integration-managed memory
-        # immediately after building the one-time response.
         session.access_token = None
         session.refresh_token = None
         return _json(self, response)
@@ -433,8 +502,6 @@ class ApprovalActionView(HomeAssistantView):
         session.status = "approved"
         session.invalidate_qr()
 
-        # Persist provisional metadata before reporting success. If persistence
-        # fails, revoke the HA refresh token and fail closed.
         try:
             await manager.async_track_issued(session)
         except Exception:
@@ -487,6 +554,173 @@ class AdminStateView(HomeAssistantView):
                 "history": [entry.as_dict() for entry in manager.history],
             },
         )
+
+
+class AdminSettingsView(HomeAssistantView):
+    """Read and update all runtime security settings from the admin panel."""
+
+    url = "/api/secure_qr_login/admin/settings"
+    name = "api:secure_qr_login:admin_settings"
+    requires_auth = True
+
+    async def get(self, request: web.Request) -> web.Response:
+        if rejected := _require_admin(self, request):
+            return rejected
+
+        manager = _manager(request)
+        if manager is None:
+            return _json(self, {"error": "not_ready"}, 503)
+
+        users = await request.app["hass"].auth.async_get_users()
+        user_options = [
+            {"id": user.id, "name": user.name or user.id}
+            for user in users
+            if user.is_active and not user.system_generated
+        ]
+
+        notify_domain = request.app["hass"].services.async_services().get("notify", {})
+        notify_options = sorted(notify_domain)
+
+        cf_country = (request.headers.get("CF-IPCountry") or "").upper().strip()
+        return _json(
+            self,
+            {
+                "values": {
+                    CONF_ENABLE_WINDOW_SECONDS: manager.enable_window_seconds,
+                    CONF_QR_LIFETIME_SECONDS: manager.qr_lifetime_seconds,
+                    CONF_MAX_PENDING_SESSIONS: manager.max_pending_sessions,
+                    CONF_HISTORY_LIMIT: manager.history_limit,
+                    CONF_ALLOWED_USER_IDS: sorted(manager.allowed_user_ids),
+                    CONF_NOTIFY_SERVICES: manager.notify_services,
+                    CONF_NOTIFY_ON_APPROVED: manager.notify_on_approved,
+                    CONF_NOTIFY_ON_DENIED: manager.notify_on_denied,
+                    CONF_ALLOWED_COUNTRIES: sorted(manager.allowed_countries),
+                    CONF_ALLOW_PRIVATE_NETWORKS: manager.allow_private_networks,
+                },
+                "users": user_options,
+                "notify_services": notify_options,
+                "geoip": {
+                    "source": "Cloudflare CF-IPCountry",
+                    "header_present": bool(cf_country),
+                    "current_country": cf_country or None,
+                    "cf_ray_present": bool(request.headers.get("CF-Ray")),
+                },
+            },
+        )
+
+    async def post(self, request: web.Request) -> web.Response:
+        if rejected := _reject_cross_origin(self, request):
+            return rejected
+        if rejected := _require_admin(self, request):
+            return rejected
+
+        manager = _manager(request)
+        if manager is None:
+            return _json(self, {"error": "not_ready"}, 503)
+
+        payload = await _json_body(request)
+        if payload is None:
+            return _json(self, {"error": "invalid_json"}, 400)
+
+        enable_window = _validate_int(
+            payload,
+            CONF_ENABLE_WINDOW_SECONDS,
+            MIN_ENABLE_WINDOW_SECONDS,
+            MAX_ENABLE_WINDOW_SECONDS,
+        )
+        qr_lifetime = _validate_int(
+            payload,
+            CONF_QR_LIFETIME_SECONDS,
+            MIN_QR_LIFETIME_SECONDS,
+            MAX_QR_LIFETIME_SECONDS,
+        )
+        max_pending = _validate_int(
+            payload,
+            CONF_MAX_PENDING_SESSIONS,
+            MIN_MAX_PENDING_SESSIONS,
+            MAX_MAX_PENDING_SESSIONS,
+        )
+        history_limit = _validate_int(
+            payload,
+            CONF_HISTORY_LIMIT,
+            MIN_HISTORY_LIMIT,
+            MAX_HISTORY_LIMIT,
+        )
+
+        allowed_users = _validate_string_list(
+            payload.get(CONF_ALLOWED_USER_IDS),
+            maximum=128,
+        )
+        notify_services = _validate_string_list(
+            payload.get(CONF_NOTIFY_SERVICES),
+            maximum=128,
+        )
+        countries = _validate_string_list(
+            payload.get(CONF_ALLOWED_COUNTRIES),
+            maximum=249,
+        )
+
+        notify_approved = payload.get(CONF_NOTIFY_ON_APPROVED)
+        notify_denied = payload.get(CONF_NOTIFY_ON_DENIED)
+        allow_private = payload.get(CONF_ALLOW_PRIVATE_NETWORKS)
+
+        if None in (
+            enable_window,
+            qr_lifetime,
+            max_pending,
+            history_limit,
+            allowed_users,
+            notify_services,
+            countries,
+        ):
+            return _json(self, {"error": "invalid_settings"}, 400)
+
+        if not all(
+            isinstance(value, bool)
+            for value in (notify_approved, notify_denied, allow_private)
+        ):
+            return _json(self, {"error": "invalid_settings"}, 400)
+
+        available_users = {
+            user.id
+            for user in await request.app["hass"].auth.async_get_users()
+            if user.is_active and not user.system_generated
+        }
+        if not set(allowed_users).issubset(available_users):
+            return _json(self, {"error": "invalid_user"}, 400)
+
+        available_notify = set(
+            request.app["hass"].services.async_services().get("notify", {})
+        )
+        if not set(notify_services).issubset(available_notify):
+            return _json(self, {"error": "invalid_notify_service"}, 400)
+
+        normalized_countries: list[str] = []
+        for item in countries:
+            code = item.upper().strip()
+            if len(code) != 2 or not code.isalpha() or code == "XX":
+                return _json(self, {"error": "invalid_country_code"}, 400)
+            if code not in normalized_countries:
+                normalized_countries.append(code)
+
+        options = dict(manager.entry.options)
+        options.update(
+            {
+                CONF_ENABLE_WINDOW_SECONDS: enable_window,
+                CONF_QR_LIFETIME_SECONDS: qr_lifetime,
+                CONF_MAX_PENDING_SESSIONS: max_pending,
+                CONF_HISTORY_LIMIT: history_limit,
+                CONF_ALLOWED_USER_IDS: allowed_users,
+                CONF_NOTIFY_SERVICES: notify_services,
+                CONF_NOTIFY_ON_APPROVED: notify_approved,
+                CONF_NOTIFY_ON_DENIED: notify_denied,
+                CONF_ALLOWED_COUNTRIES: normalized_countries,
+                CONF_ALLOW_PRIVATE_NETWORKS: allow_private,
+            }
+        )
+
+        await manager.async_update_settings(options)
+        return _json(self, {"status": "saved"})
 
 
 class AdminWindowView(HomeAssistantView):
@@ -671,6 +905,7 @@ def register_views(hass: HomeAssistant) -> None:
         ApprovalDetailsView(),
         ApprovalActionView(),
         AdminStateView(),
+        AdminSettingsView(),
         AdminWindowView(),
         AdminRevokeView(),
         AdminRevokeAllView(),
