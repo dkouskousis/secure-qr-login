@@ -52,6 +52,7 @@ from .const import (
     DOMAIN,
     GLOBAL_START_LIMIT,
     GLOBAL_START_WINDOW_SECONDS,
+    ISO_COUNTRY_CODES,
     MAX_ENABLE_WINDOW_SECONDS,
     MAX_HISTORY_LIMIT,
     MAX_MAX_PENDING_SESSIONS,
@@ -698,7 +699,7 @@ class AdminSettingsView(HomeAssistantView):
         normalized_countries: list[str] = []
         for item in countries:
             code = item.upper().strip()
-            if len(code) != 2 or not code.isalpha() or code == "XX":
+            if code not in ISO_COUNTRY_CODES:
                 return _json(self, {"error": "invalid_country_code"}, 400)
             if code not in normalized_countries:
                 normalized_countries.append(code)
