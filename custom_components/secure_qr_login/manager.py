@@ -251,29 +251,35 @@ class SecureQrLoginManager:
         if not allowed:
             return True, "", "disabled"
 
-        remote = request.remote or ""
-        try:
-            ip = ipaddress.ip_address(remote)
-        except ValueError:
-            ip = None
-
-        if (
-            ip is not None
-            and self.allow_private_networks
-            and (ip.is_private or ip.is_loopback or ip.is_link_local)
-        ):
-            return True, "LOCAL", "private_network"
-
-        # Require multiple Cloudflare-origin headers before using CF-IPCountry.
-        # These are reliable when the public HA hostname is reachable only via
-        # Cloudflare/Tunnel. They must not be treated as cryptographic proof if
-        # the origin is separately exposed to the public Internet.
+        # Cloudflare headers take precedence over request.remote. This is
+        # important with cloudflared/reverse proxies where request.remote may
+        # otherwise be the proxy's private address rather than the visitor.
         country = (request.headers.get("CF-IPCountry") or "").upper().strip()
         cf_ray = request.headers.get("CF-Ray")
         cf_connecting_ip = request.headers.get("CF-Connecting-IP")
+        through_cloudflare = bool(cf_ray or cf_connecting_ip or country)
 
-        if not cf_ray or not cf_connecting_ip:
-            return False, country or "UNKNOWN", "cloudflare_headers_missing"
+        if through_cloudflare:
+            # Require the full header set before trusting CF-IPCountry.
+            if not cf_ray or not cf_connecting_ip:
+                return False, country or "UNKNOWN", "cloudflare_headers_missing"
+        else:
+            remote = request.remote or ""
+            try:
+                ip = ipaddress.ip_address(remote)
+            except ValueError:
+                ip = None
+
+            if (
+                ip is not None
+                and self.allow_private_networks
+                and (ip.is_private or ip.is_loopback or ip.is_link_local)
+            ):
+                return True, "LOCAL", "private_network"
+
+            # Public requests with a country allowlist fail closed when there
+            # is no trusted GeoIP source.
+            return False, "UNKNOWN", "cloudflare_headers_missing"
 
         if (
             len(country) != 2
