@@ -149,6 +149,25 @@
     }
   }
 
+  function fillCountrySelect(select, codes, selected) {
+    select.replaceChildren();
+    const chosen = new Set(selected || []);
+    let displayNames = null;
+
+    try {
+      displayNames = new Intl.DisplayNames([navigator.language || 'en'], {type: 'region'});
+    } catch {}
+
+    for (const code of codes || []) {
+      const option = document.createElement('option');
+      option.value = code;
+      const name = displayNames?.of(code) || code;
+      option.textContent = `${name} (${code})`;
+      option.selected = chosen.has(code);
+      select.append(option);
+    }
+  }
+
   async function loadSettings() {
     const r = await fetch('/api/secure_qr_login/admin/settings', {
       headers: headers(),
@@ -165,11 +184,15 @@
     document.getElementById('settingHistory').value = v.history_limit;
     document.getElementById('settingNotifyApproved').checked = v.notify_on_approved;
     document.getElementById('settingNotifyDenied').checked = v.notify_on_denied;
-    document.getElementById('settingCountries').value = (v.allowed_countries || []).join(', ');
     document.getElementById('settingPrivate').checked = v.allow_private_networks;
 
     fillSelect(document.getElementById('settingUsers'), d.users || [], v.allowed_user_ids || []);
     fillSelect(document.getElementById('settingNotify'), d.notify_services || [], v.notify_services || []);
+    fillCountrySelect(
+      document.getElementById('settingCountries'),
+      d.country_codes || [],
+      v.allowed_countries || []
+    );
 
     const geo = d.geoip || {};
     document.getElementById('geoStatus').textContent = geo.header_present
@@ -179,10 +202,7 @@
 
   async function saveSettings() {
     const message = document.getElementById('settingsMessage');
-    const countries = document.getElementById('settingCountries').value
-      .split(',')
-      .map(value => value.trim().toUpperCase())
-      .filter(Boolean);
+    const countries = selectedValues(document.getElementById('settingCountries'));
 
     const payload = {
       enable_window_seconds: Number(document.getElementById('settingWindow').value),
