@@ -80,7 +80,9 @@
 
       <h3>Country restriction</h3>
       <p class="muted small">
-        Uses Cloudflare <code>CF-IPCountry</code>. Leave the list empty to disable country filtering.
+        Uses Cloudflare country headers when available. With Nabu Casa or direct access,
+        the client IP is resolved locally inside Home Assistant using an offline GeoIP database.
+        Leave the list empty to disable country filtering.
       </p>
 
       <label class="field">
@@ -91,7 +93,7 @@
 
       <label class="check-row">
         <input id="settingPrivate" type="checkbox">
-        Allow private / local network clients without GeoIP
+        Allow private / local network clients without country filtering
       </label>
 
       <div id="geoStatus" class="notice muted"></div>
