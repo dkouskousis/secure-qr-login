@@ -19,7 +19,6 @@ import json
 import logging
 import os
 from pathlib import Path
-import shutil
 
 from aiohttp import ClientError, ClientTimeout
 from hass_nabucasa import remote as nabu_remote
@@ -40,6 +39,8 @@ _DOWNLOAD_TEMPLATE = (
 )
 _UPDATE_CHECK_INTERVAL = timedelta(hours=24)
 _DOWNLOAD_TIMEOUT = ClientTimeout(total=120)
+_MAX_ARCHIVE_BYTES = 25 * 1024 * 1024
+_MAX_DATABASE_BYTES = 64 * 1024 * 1024
 
 
 @dataclass(slots=True, frozen=True)
@@ -200,8 +201,16 @@ class LocalGeoIPResolver:
                     return False
                 response.raise_for_status()
 
+                content_length = response.content_length
+                if content_length is not None and content_length > _MAX_ARCHIVE_BYTES:
+                    raise ValueError("GeoIP archive is larger than the allowed limit")
+
+                downloaded = 0
                 with archive_tmp.open("wb") as stream:
                     async for chunk in response.content.iter_chunked(128 * 1024):
+                        downloaded += len(chunk)
+                        if downloaded > _MAX_ARCHIVE_BYTES:
+                            raise ValueError("GeoIP archive exceeded the allowed limit")
                         stream.write(chunk)
 
             await self.hass.async_add_executor_job(
@@ -236,8 +245,13 @@ class LocalGeoIPResolver:
         release: str,
     ) -> None:
         """Decompress, verify and atomically install the downloaded MMDB."""
+        extracted = 0
         with gzip.open(archive_path, "rb") as source, database_tmp.open("wb") as target:
-            shutil.copyfileobj(source, target)
+            while chunk := source.read(256 * 1024):
+                extracted += len(chunk)
+                if extracted > _MAX_DATABASE_BYTES:
+                    raise ValueError("GeoIP database exceeded the allowed limit")
+                target.write(chunk)
 
         # Validate the MMDB before replacing the active database.
         reader = maxminddb.open_database(str(database_tmp))
