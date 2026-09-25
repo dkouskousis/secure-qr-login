@@ -69,11 +69,52 @@ async def test_failed_update_keeps_existing_reader(hass, monkeypatch) -> None:
     resolver._database_release = "2000-01"
 
     async def fail_download(_year, _month):
-        return False
+        return False, "database_update_failed:TestError"
 
     monkeypatch.setattr(resolver, "_async_download_release", fail_download)
 
     await resolver.async_initialize()
 
     assert resolver.database_ready
+    assert resolver._reader is reader
+
+
+async def test_manual_check_tracks_attempt_without_redownload_when_current(
+    hass,
+    monkeypatch,
+) -> None:
+    resolver = LocalGeoIPResolver(hass)
+    resolver._reader = FakeReader({"8.8.8.8": "US"})
+    resolver._database_release = "2099-12"
+
+    monkeypatch.setattr(resolver, "_current_release", lambda: "2099-12")
+
+    result = await resolver.async_force_update()
+
+    assert result.success
+    assert not result.updated
+    assert result.status == "up_to_date"
+    assert result.attempted_at is not None
+
+
+async def test_failed_manual_update_preserves_existing_database(
+    hass,
+    monkeypatch,
+) -> None:
+    resolver = LocalGeoIPResolver(hass)
+    reader = FakeReader({"8.8.8.8": "US"})
+    resolver._reader = reader
+    resolver._database_release = "2000-01"
+
+    async def fail_download(_year, _month):
+        return False, "database_update_failed:TestError"
+
+    monkeypatch.setattr(resolver, "_async_download_release", fail_download)
+
+    result = await resolver.async_force_update()
+
+    assert not result.success
+    assert not result.updated
+    assert result.status == "failed"
+    assert result.error == "database_update_failed:TestError"
     assert resolver._reader is reader
