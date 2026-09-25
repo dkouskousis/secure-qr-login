@@ -416,3 +416,38 @@ async def test_admin_settings_api_rejects_invalid_country_code(
 
     assert response.status == 400
     assert (await response.json())["error"] == "invalid_country_code"
+
+
+async def test_admin_can_trigger_manual_geoip_update(
+    hass_client,
+    qr_manager,
+    monkeypatch,
+) -> None:
+    """Manual GeoIP maintenance is admin-only and returns update health."""
+    from custom_components.secure_qr_login.geoip import GeoIPUpdateResult
+
+    client = await hass_client()
+
+    async def fake_manual_update():
+        return GeoIPUpdateResult(
+            success=True,
+            updated=False,
+            status="up_to_date",
+            release="2026-09",
+            error=None,
+            attempted_at="2026-09-25T18:00:00+00:00",
+            successful_at="2026-09-01T00:00:00+00:00",
+        )
+
+    monkeypatch.setattr(qr_manager, "async_manual_geoip_update", fake_manual_update)
+
+    response = await client.post(
+        "/api/secure_qr_login/admin/geoip-update",
+        json={},
+        headers={"Origin": _origin(client)},
+    )
+
+    assert response.status == 200
+    payload = await response.json()
+    assert payload["status"] == "up_to_date"
+    assert payload["release"] == "2026-09"
