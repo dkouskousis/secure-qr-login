@@ -3,11 +3,33 @@
     "step": {
       "user": {
         "title": "Secure QR Login",
-        "description": "Εγκατάσταση Secure QR Login. Η λειτουργία παραμένει κλειστή μέχρι να ενεργοποιήσεις το προσωρινό παράθυρο τριών λεπτών."
+        "description": "Εγκατάσταση Secure QR Login. Η λειτουργία παραμένει κλειστή μέχρι ένας διαχειριστής να ανοίξει προσωρινά το παράθυρο σύνδεσης."
       }
     },
     "abort": {
       "already_configured": "Το Secure QR Login είναι ήδη ρυθμισμένο."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Ρυθμίσεις Secure QR Login",
+        "description": "Οι ρυθμίσεις ασφαλείας περιορίζονται σκόπιμα σε συντηρητικά όρια.",
+        "data": {
+          "enable_window_seconds": "Διάρκεια παραθύρου σύνδεσης (δευτερόλεπτα)",
+          "qr_lifetime_seconds": "Ανανέωση QR (δευτερόλεπτα)",
+          "max_pending_sessions": "Μέγιστες εκκρεμείς αιτήσεις σύνδεσης",
+          "history_limit": "Εγγραφές ιστορικού που θα διατηρούνται",
+          "allowed_user_ids": "Χρήστες που επιτρέπεται να εγκρίνουν QR login",
+          "notify_services": "Παραλήπτες ειδοποιήσεων",
+          "notify_on_approved": "Ειδοποίηση όταν εγκρίνεται σύνδεση",
+          "notify_on_denied": "Ειδοποίηση όταν απορρίπτεται σύνδεση"
+        },
+        "data_description": {
+          "allowed_user_ids": "Αν μείνει κενό, επιτρέπονται όλοι οι ενεργοί μη-system χρήστες του Home Assistant. Αν επιλεγούν χρήστες, μόνο αυτοί μπορούν να εγκρίνουν QR login για τον δικό τους λογαριασμό.",
+          "notify_services": "Υπηρεσίες notify του Home Assistant, π.χ. notify.mobile_app_phone. Οι ειδοποιήσεις δεν περιέχουν ποτέ authentication secrets."
+        }
+      }
     }
   }
 }
