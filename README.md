@@ -185,7 +185,9 @@ Saving settings closes any currently open QR-login window and cancels pending re
 
 Country restriction is optional and is implemented as an additional policy layer using the client IP already accepted by Home Assistant's HTTP stack.
 
-The integration performs the country lookup **locally** with a pinned IPv4+IPv6 GeoIP database. Client IP addresses are not sent to a third-party GeoIP lookup API.
+The integration performs the country lookup **locally** with the DB-IP Country Lite IPv4+IPv6 MMDB database. Client IP addresses are not sent to a third-party GeoIP lookup API.
+
+The database is downloaded from DB-IP and refreshed monthly. Updates are installed atomically only after the MMDB file has been decompressed, size-limited and validated. If an update fails, the last valid local database remains in use. DB-IP Country Lite is licensed under CC BY 4.0.
 
 This supports:
 
@@ -202,7 +204,7 @@ When an allowed-country list is configured:
 - private/LAN clients are denied unless **Allow private / local network clients** is explicitly enabled;
 - Nabu Casa requests never receive the private-network bypass if the tunnel exposes only a private relay address.
 
-Nabu Casa Remote UI uses a secure tunnel rather than Home Assistant's traditional reverse-proxy configuration. Home Assistant explicitly excludes Remote UI traffic from normal X-Forwarded-For processing, while current SniTun supports forwarding the real client IP through the tunnel transport. The integration uses the resulting `request.remote` value and then resolves it locally.
+Nabu Casa Remote UI uses a secure tunnel rather than Home Assistant's traditional reverse-proxy configuration. Home Assistant explicitly excludes Remote UI traffic from normal X-Forwarded-For processing. Current SniTun presents the real visitor IP as the aiohttp transport peer address, so Home Assistant exposes it as `request.remote`. Secure QR Login resolves that IP only against its local database.
 
 GeoIP is not an authentication factor and should not be treated as exact location proof. It remains secondary to the integration's temporary admin window, rotating QR token, device secret and Home Assistant authentication controls.
 
@@ -252,11 +254,13 @@ Adding reCAPTCHA would introduce an external dependency and additional browser d
 
 ## Dependency
 
-QR SVG generation uses `segno==1.6.6`. Local country resolution uses `geoip2fast==1.2.2` with its bundled IPv4+IPv6 database. Both are pinned in `manifest.json`.
+QR SVG generation uses `segno==1.6.6`. Local MMDB reads use `maxminddb==3.2.0`. Both are pinned in `manifest.json`.
+
+Country data is provided by **DB-IP Country Lite** and stored locally under Home Assistant's `.storage` area. IP Geolocation by [DB-IP](https://db-ip.com), licensed under CC BY 4.0.
 
 ## Version
 
-Current integration version: **1.5.0**
+Current integration version: **1.5.1**
 
 ## License
 
