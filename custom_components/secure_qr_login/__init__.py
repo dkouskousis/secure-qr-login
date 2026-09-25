@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from homeassistant.components import frontend
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -17,7 +15,8 @@ _VIEWS_REGISTERED = f"{DOMAIN}_views_registered"
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Secure QR Login from a config entry."""
-    manager = SecureQrLoginManager(hass)
+    manager = SecureQrLoginManager(hass, entry)
+    await manager.async_initialize()
     hass.data[DOMAIN] = manager
 
     if not hass.data.get(_VIEWS_REGISTERED):
@@ -35,8 +34,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         update=True,
     )
 
+    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload when security options change."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
