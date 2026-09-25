@@ -34,6 +34,7 @@ class LoginSession:
     access_token: str | None = None
     token_expires_in: int = 0
     consumed: bool = False
+    device_secret_failures: int = 0
 
     def expired(self, now: float | None = None) -> bool:
         return (now or time.time()) >= self.expires_at
@@ -48,6 +49,11 @@ class LoginSession:
 
     def device_secret_valid(self, secret: str) -> bool:
         return digest_matches(secret, self.device_secret_digest)
+
+    def invalidate_qr(self) -> None:
+        """Make the current QR unusable immediately."""
+        self.qr_token_digest = ""
+        self.qr_expires_at = 0.0
 
     def public_status(self) -> dict[str, Any]:
         return {
