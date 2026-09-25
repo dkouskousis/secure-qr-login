@@ -587,14 +587,6 @@ class AdminSettingsView(HomeAssistantView):
         notify_domain = request.app["hass"].services.async_services().get("notify", {})
         notify_options = sorted(notify_domain)
 
-        cf_country = (request.headers.get("CF-IPCountry") or "").upper().strip()
-        cf_ray_present = bool(request.headers.get("CF-Ray"))
-        cf_connecting_ip_present = bool(request.headers.get("CF-Connecting-IP"))
-        cloudflare_ready = (
-            bool(cf_country)
-            and cf_ray_present
-            and cf_connecting_ip_present
-        )
         nabu_request = is_nabu_casa_request()
         local_result = await manager.geoip.async_lookup_ip(request.remote)
         return _json(
@@ -616,21 +608,11 @@ class AdminSettingsView(HomeAssistantView):
                 "notify_services": notify_options,
                 "country_codes": sorted(ISO_COUNTRY_CODES),
                 "geoip": {
-                    "provider": (
-                        "cloudflare"
-                        if cloudflare_ready
-                        else "nabu_casa"
-                        if nabu_request
-                        else "local_ip"
-                    ),
-                    "cloudflare_ready": cloudflare_ready,
+                    "provider": "nabu_casa" if nabu_request else "client_ip",
                     "nabu_casa_request": nabu_request,
                     "client_ip_available": local_result.client_ip is not None,
-                    "current_country": (
-                        cf_country
-                        if cloudflare_ready
-                        else local_result.country_code
-                    ),
+                    "current_country": local_result.country_code,
+                    "resolution_reason": local_result.reason,
                     "local_database_ready": manager.geoip.database_ready,
                     "local_database_source": manager.geoip.source_info,
                 },
