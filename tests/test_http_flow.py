@@ -12,6 +12,8 @@ import time
 
 import pytest
 
+from homeassistant.setup import async_setup_component
+
 from custom_components.secure_qr_login.const import DOMAIN
 from custom_components.secure_qr_login.manager import SecureQrLoginManager
 from custom_components.secure_qr_login import views
@@ -20,6 +22,8 @@ from custom_components.secure_qr_login import views
 @pytest.fixture
 async def qr_manager(hass):
     """Register the real views with an in-memory manager for one test."""
+    assert await async_setup_component(hass, "http", {})
+
     entry = SimpleNamespace(options={})
     manager = SecureQrLoginManager(hass, entry)
     await manager.store.async_load(manager.history_limit)
@@ -116,7 +120,6 @@ async def test_full_login_flow_is_single_use(
     assert credentials["access_token"] == "access-secret"
     assert credentials["refresh_token"] == "refresh-secret"
 
-    # The session is removed immediately after one-time delivery.
     response = await client.post(
         "/api/secure_qr_login/status",
         json={
@@ -161,8 +164,20 @@ async def test_old_qr_token_cannot_be_replayed(
     }
     headers = {"Origin": _origin(client)}
 
-    assert (await client.post("/api/secure_qr_login/qr", json=payload, headers=headers)).status == 200
-    assert (await client.post("/api/secure_qr_login/qr", json=payload, headers=headers)).status == 200
+    assert (
+        await client.post(
+            "/api/secure_qr_login/qr",
+            json=payload,
+            headers=headers,
+        )
+    ).status == 200
+    assert (
+        await client.post(
+            "/api/secure_qr_login/qr",
+            json=payload,
+            headers=headers,
+        )
+    ).status == 200
 
     old = await client.get(
         "/api/secure_qr_login/approval",
@@ -232,8 +247,6 @@ async def test_clear_history_keeps_active_login_and_revoke_all_removes_it(
     assert qr_manager.history == []
     assert started["session_id"] in qr_manager.active_logins
 
-    # Re-open the window to verify revoke-all closes it as part of fail-safe
-    # bulk revocation.
     qr_manager.enabled_until = time.time() + 180
     response = await client.post(
         "/api/secure_qr_login/admin/revoke-all",
