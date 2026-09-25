@@ -8,6 +8,7 @@
   const revokeAllButton = document.getElementById('revokeAll');
   const clearHistoryButton = document.getElementById('clearHistory');
   const saveSettingsButton = document.getElementById('saveSettings');
+  const geoUpdateButton = document.getElementById('geoUpdate');
 
   let token = null;
   let enabled = false;
@@ -213,6 +214,46 @@
         : 'Local GeoIP database is not ready. Country filtering will fail closed until it can be loaded.';
     }
     document.getElementById('geoStatus').textContent = geoText;
+
+    const warning = document.getElementById('geoWarning');
+    if (geo.local_database_error) {
+      warning.hidden = false;
+      warning.textContent =
+        `GeoIP database update failed — still using ${geo.local_database_release || 'the last valid database'}.`;
+    } else {
+      warning.hidden = true;
+      warning.textContent = '';
+    }
+
+    const attempt = geo.last_update_attempt
+      ? new Date(geo.last_update_attempt).toLocaleString()
+      : 'Never';
+    const success = geo.last_successful_update
+      ? new Date(geo.last_successful_update).toLocaleString()
+      : 'Never';
+    document.getElementById('geoTimes').textContent =
+      `Last update attempt: ${attempt} · Last successful update: ${success}`;
+  }
+
+  async function updateGeoIP() {
+    geoUpdateButton.disabled = true;
+    geoUpdateButton.textContent = 'Checking…';
+
+    const r = await fetch('/api/secure_qr_login/admin/geoip-update', {
+      method: 'POST',
+      headers: headers({'Content-Type': 'application/json'}),
+      body: '{}',
+      cache: 'no-store'
+    });
+
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      alert(`GeoIP update failed: ${data.error || 'unknown error'}`);
+    }
+
+    await Promise.all([state(), loadSettings()]);
+    geoUpdateButton.disabled = false;
+    geoUpdateButton.textContent = 'Check for GeoIP update';
   }
 
   async function saveSettings() {
@@ -310,6 +351,7 @@
   revokeAllButton.addEventListener('click', revokeAll);
   clearHistoryButton.addEventListener('click', clearHistory);
   saveSettingsButton.addEventListener('click', saveSettings);
+  geoUpdateButton.addEventListener('click', updateGeoIP);
 
   state();
   loadSettings();
