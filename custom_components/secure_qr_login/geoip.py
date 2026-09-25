@@ -164,8 +164,11 @@ class LocalGeoIPResolver:
 
         # DB-IP publishes monthly. At the very beginning of a month the current
         # file may not yet be available, so fall back to the previous month.
-        if self._reader is None:
-            previous = self._previous_month()
+        # Also do this when an older DB exists, so a transient missed update
+        # cannot leave the installation two or more months behind.
+        previous = self._previous_month()
+        previous_release = f"{previous.year:04d}-{previous.month:02d}"
+        if self._database_release != previous_release:
             if await self._async_download_release(previous.year, previous.month):
                 await self._async_open_existing_database()
 
@@ -205,13 +208,14 @@ class LocalGeoIPResolver:
                 if content_length is not None and content_length > _MAX_ARCHIVE_BYTES:
                     raise ValueError("GeoIP archive is larger than the allowed limit")
 
-                downloaded = 0
-                with archive_tmp.open("wb") as stream:
-                    async for chunk in response.content.iter_chunked(128 * 1024):
-                        downloaded += len(chunk)
-                        if downloaded > _MAX_ARCHIVE_BYTES:
-                            raise ValueError("GeoIP archive exceeded the allowed limit")
-                        stream.write(chunk)
+                archive_data = await response.read()
+                if len(archive_data) > _MAX_ARCHIVE_BYTES:
+                    raise ValueError("GeoIP archive exceeded the allowed limit")
+
+                await self.hass.async_add_executor_job(
+                    archive_tmp.write_bytes,
+                    archive_data,
+                )
 
             await self.hass.async_add_executor_job(
                 self._install_downloaded_database,
