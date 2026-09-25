@@ -11,6 +11,7 @@ only performs an offline IP -> country lookup on that already-accepted value.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import gzip
@@ -53,11 +54,32 @@ class GeoIPResult:
     reason: str
 
 
+@dataclass(slots=True, frozen=True)
+class GeoIPUpdateResult:
+    """Result of checking/updating the local country database."""
+
+    success: bool
+    updated: bool
+    status: str
+    release: str | None
+    error: str | None
+    attempted_at: str | None
+    successful_at: str | None
+
+
+UpdateCallback = Callable[[GeoIPUpdateResult, str], Awaitable[None]]
+
+
 class LocalGeoIPResolver:
     """Resolve public IPs locally using a periodically refreshed MMDB file."""
 
-    def __init__(self, hass: HomeAssistant) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        update_callback: UpdateCallback | None = None,
+    ) -> None:
         self.hass = hass
+        self._update_callback = update_callback
         self._reader = None
         self._load_lock = asyncio.Lock()
         self._directory = Path(hass.config.path(".storage", DOMAIN, "geoip"))
@@ -65,6 +87,8 @@ class LocalGeoIPResolver:
         self._metadata_path = self._directory / _METADATA_FILENAME
         self._database_release: str | None = None
         self._last_error: str | None = None
+        self._last_update_attempt: str | None = None
+        self._last_successful_update: str | None = None
         self._update_unsub = None
 
     @property
@@ -84,20 +108,24 @@ class LocalGeoIPResolver:
         return self._last_error
 
     @property
+    def last_update_attempt(self) -> str | None:
+        return self._last_update_attempt
+
+    @property
+    def last_successful_update(self) -> str | None:
+        return self._last_successful_update
+
+    @property
     def source_info(self) -> str:
         return "DB-IP Country Lite (CC BY 4.0)"
 
     async def async_initialize(self) -> None:
-        """Load an existing DB and refresh it when needed.
-
-        An existing valid database is loaded first so country filtering remains
-        available even when the current DB-IP download cannot be reached.
-        """
+        """Load an existing DB, refresh if needed, and start scheduled checks."""
         async with self._load_lock:
             if self._reader is None and self._database_path.exists():
                 await self._async_open_existing_database()
 
-            await self._async_refresh_if_needed_locked()
+            result = await self._async_refresh_if_needed_locked(force=False)
 
             if self._update_unsub is None:
                 self._update_unsub = async_track_time_interval(
@@ -105,6 +133,21 @@ class LocalGeoIPResolver:
                     self._async_scheduled_refresh,
                     _UPDATE_CHECK_INTERVAL,
                 )
+
+        if result is not None:
+            await self._async_notify_update(result, "automatic")
+
+    async def async_force_update(self) -> GeoIPUpdateResult:
+        """Manually check for and install the newest available DB release."""
+        async with self._load_lock:
+            if self._reader is None and self._database_path.exists():
+                await self._async_open_existing_database()
+
+            result = await self._async_refresh_if_needed_locked(force=True)
+
+        # force=True always returns a result.
+        assert result is not None
+        return result
 
     async def async_shutdown(self) -> None:
         """Close the MMDB reader and stop scheduled update checks."""
@@ -119,7 +162,22 @@ class LocalGeoIPResolver:
 
     async def _async_scheduled_refresh(self, _now=None) -> None:
         async with self._load_lock:
-            await self._async_refresh_if_needed_locked()
+            result = await self._async_refresh_if_needed_locked(force=False)
+
+        if result is not None:
+            await self._async_notify_update(result, "automatic")
+
+    async def _async_notify_update(
+        self,
+        result: GeoIPUpdateResult,
+        trigger: str,
+    ) -> None:
+        if self._update_callback is None:
+            return
+        try:
+            await self._update_callback(result, trigger)
+        except Exception:
+            _LOGGER.exception("GeoIP update callback failed")
 
     async def _async_open_existing_database(self) -> None:
         """Open the existing database off the event loop."""
@@ -130,6 +188,7 @@ class LocalGeoIPResolver:
             )
         except Exception as err:
             self._last_error = f"database_open_failed:{type(err).__name__}"
+            await self._async_write_metadata()
             _LOGGER.warning("Unable to open local GeoIP database: %s", err)
             return
 
@@ -138,39 +197,158 @@ class LocalGeoIPResolver:
         if old_reader is not None:
             await self.hass.async_add_executor_job(old_reader.close)
 
-        self._load_metadata()
-        self._last_error = None
+        await self._async_load_metadata()
 
-    def _load_metadata(self) -> None:
-        """Load non-sensitive database metadata."""
+    async def _async_load_metadata(self) -> None:
+        """Load non-sensitive database/update metadata."""
+        data = await self.hass.async_add_executor_job(self._read_metadata)
+        release = data.get("release")
+        last_attempt = data.get("last_update_attempt")
+        last_success = data.get("last_successful_update")
+        last_error = data.get("last_error")
+
+        self._database_release = release if isinstance(release, str) else None
+        self._last_update_attempt = (
+            last_attempt if isinstance(last_attempt, str) else None
+        )
+        self._last_successful_update = (
+            last_success if isinstance(last_success, str) else None
+        )
+        self._last_error = last_error if isinstance(last_error, str) else None
+
+    def _read_metadata(self) -> dict:
         try:
-            data = json.loads(self._metadata_path.read_text(encoding="utf-8"))
-            release = data.get("release")
-            self._database_release = release if isinstance(release, str) else None
+            value = json.loads(self._metadata_path.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
-            self._database_release = None
+            return {}
+        return value if isinstance(value, dict) else {}
 
-    async def _async_refresh_if_needed_locked(self) -> None:
+    async def _async_write_metadata(self) -> None:
+        """Persist update metadata atomically without blocking the event loop."""
+        await self.hass.async_add_executor_job(
+            self._write_metadata,
+            {
+                "release": self._database_release,
+                "source": "DB-IP Country Lite",
+                "license": "CC BY 4.0",
+                "last_update_attempt": self._last_update_attempt,
+                "last_successful_update": self._last_successful_update,
+                "last_error": self._last_error,
+            },
+        )
+
+    def _write_metadata(self, data: dict) -> None:
+        self._directory.mkdir(parents=True, exist_ok=True)
+        metadata_tmp = self._metadata_path.with_suffix(".json.tmp")
+        metadata_tmp.write_text(
+            json.dumps(data, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        os.replace(metadata_tmp, self._metadata_path)
+
+    async def _async_refresh_if_needed_locked(
+        self,
+        *,
+        force: bool,
+    ) -> GeoIPUpdateResult | None:
         target = self._current_release()
 
-        # Current-month DB already present.
+        # Normal scheduled checks stay silent while the current month's DB is
+        # already installed. A manual check still updates "last attempt" and
+        # reports that no download was required.
         if self._reader is not None and self._database_release == target:
-            return
+            if not force:
+                return None
 
-        refreshed = await self._async_download_release(*map(int, target.split("-")))
+            self._last_update_attempt = self._now_iso()
+            self._last_error = None
+            await self._async_write_metadata()
+            return self._update_result(
+                success=True,
+                updated=False,
+                status="up_to_date",
+            )
+
+        self._last_update_attempt = self._now_iso()
+        await self._async_write_metadata()
+
+        refreshed, error = await self._async_download_release(
+            *map(int, target.split("-"))
+        )
         if refreshed:
-            await self._async_open_existing_database()
-            return
+            await self._async_mark_update_success(target)
+            return self._update_result(
+                success=True,
+                updated=True,
+                status="updated",
+            )
 
-        # DB-IP publishes monthly. At the very beginning of a month the current
-        # file may not yet be available, so fall back to the previous month.
-        # Also do this when an older DB exists, so a transient missed update
-        # cannot leave the installation two or more months behind.
+        # DB-IP publishes monthly. At the beginning of a month the current file
+        # may not yet be available, so fall back to the previous month.
         previous = self._previous_month()
         previous_release = f"{previous.year:04d}-{previous.month:02d}"
+
+        if self._database_release == previous_release and error == "not_found":
+            # The newest published DB is already installed. This is not an
+            # operational failure and should not display a warning.
+            self._last_error = None
+            await self._async_write_metadata()
+            return self._update_result(
+                success=True,
+                updated=False,
+                status="latest_available",
+            )
+
         if self._database_release != previous_release:
-            if await self._async_download_release(previous.year, previous.month):
-                await self._async_open_existing_database()
+            previous_ok, previous_error = await self._async_download_release(
+                previous.year,
+                previous.month,
+            )
+            if previous_ok:
+                await self._async_mark_update_success(previous_release)
+                return self._update_result(
+                    success=True,
+                    updated=True,
+                    status="updated",
+                )
+            if previous_error and previous_error != "not_found":
+                error = previous_error
+
+        self._last_error = error or "database_update_unavailable"
+        await self._async_write_metadata()
+        return self._update_result(
+            success=False,
+            updated=False,
+            status="failed",
+        )
+
+    async def _async_mark_update_success(self, release: str) -> None:
+        self._database_release = release
+        self._last_successful_update = self._now_iso()
+        self._last_error = None
+        await self._async_write_metadata()
+        await self._async_open_existing_database()
+
+    @staticmethod
+    def _now_iso() -> str:
+        return datetime.now(UTC).isoformat()
+
+    def _update_result(
+        self,
+        *,
+        success: bool,
+        updated: bool,
+        status: str,
+    ) -> GeoIPUpdateResult:
+        return GeoIPUpdateResult(
+            success=success,
+            updated=updated,
+            status=status,
+            release=self._database_release,
+            error=self._last_error,
+            attempted_at=self._last_update_attempt,
+            successful_at=self._last_successful_update,
+        )
 
     @staticmethod
     def _current_release() -> str:
@@ -183,7 +361,11 @@ class LocalGeoIPResolver:
         first = now.replace(day=1)
         return (first - timedelta(days=1)).replace(day=1)
 
-    async def _async_download_release(self, year: int, month: int) -> bool:
+    async def _async_download_release(
+        self,
+        year: int,
+        month: int,
+    ) -> tuple[bool, str | None]:
         """Download, validate and atomically install one DB-IP monthly release."""
         url = _DOWNLOAD_TEMPLATE.format(year=year, month=month)
         release = f"{year:04d}-{month:02d}"
@@ -201,7 +383,7 @@ class LocalGeoIPResolver:
         try:
             async with session.get(url, timeout=_DOWNLOAD_TIMEOUT) as response:
                 if response.status == 404:
-                    return False
+                    return False, "not_found"
                 response.raise_for_status()
 
                 content_length = response.content_length
@@ -221,16 +403,15 @@ class LocalGeoIPResolver:
                 self._install_downloaded_database,
                 archive_tmp,
                 database_tmp,
-                release,
             )
         except (ClientError, TimeoutError, OSError, ValueError) as err:
-            self._last_error = f"database_update_failed:{type(err).__name__}"
+            code = f"database_update_failed:{type(err).__name__}"
             _LOGGER.warning("Unable to update DB-IP GeoIP database: %s", err)
-            return False
+            return False, code
         except Exception as err:
-            self._last_error = f"database_update_failed:{type(err).__name__}"
+            code = f"database_update_failed:{type(err).__name__}"
             _LOGGER.exception("Unexpected error updating DB-IP GeoIP database")
-            return False
+            return False, code
         finally:
             for path in (archive_tmp, database_tmp):
                 try:
@@ -238,15 +419,12 @@ class LocalGeoIPResolver:
                 except OSError:
                     pass
 
-        self._database_release = release
-        self._last_error = None
-        return True
+        return True, None
 
     def _install_downloaded_database(
         self,
         archive_path: Path,
         database_tmp: Path,
-        release: str,
     ) -> None:
         """Decompress, verify and atomically install the downloaded MMDB."""
         extracted = 0
@@ -257,7 +435,6 @@ class LocalGeoIPResolver:
                     raise ValueError("GeoIP database exceeded the allowed limit")
                 target.write(chunk)
 
-        # Validate the MMDB before replacing the active database.
         reader = maxminddb.open_database(str(database_tmp))
         try:
             sample = reader.get("8.8.8.8")
@@ -272,19 +449,6 @@ class LocalGeoIPResolver:
             reader.close()
 
         os.replace(database_tmp, self._database_path)
-        metadata_tmp = self._metadata_path.with_suffix(".json.tmp")
-        metadata_tmp.write_text(
-            json.dumps(
-                {
-                    "release": release,
-                    "source": "DB-IP Country Lite",
-                    "license": "CC BY 4.0",
-                },
-                separators=(",", ":"),
-            ),
-            encoding="utf-8",
-        )
-        os.replace(metadata_tmp, self._metadata_path)
 
     async def async_lookup_ip(self, value: str | None) -> GeoIPResult:
         """Resolve a public client IP to a country using the local database."""
