@@ -164,9 +164,7 @@ A GitHub release is created automatically only after the test job passes. Stale 
 
 ## Configuration
 
-Open:
-
-**Settings → Devices & services → Secure QR Login → Configure**
+All runtime/security settings are managed directly from the **QR Login** admin panel. The legacy Home Assistant options flow is no longer used, so there is a single configuration surface.
 
 Available settings:
 
@@ -178,6 +176,29 @@ Available settings:
 - Notification targets
 - Notify on approved
 - Notify on denied
+- Allowed countries
+- Allow private/local network clients without GeoIP
+
+Saving settings closes any currently open QR-login window and cancels pending requests. Already-delivered QR-created logins are not revoked.
+
+## Country restriction / GeoIP
+
+Country restriction is optional and is implemented as an additional policy layer using Cloudflare's `CF-IPCountry` request header.
+
+When an allowed-country list is configured:
+
+- the requesting browser must come from one of the configured two-letter country codes;
+- `/start`, `/qr`, and `/status` are all country-checked;
+- public requests fail closed if the expected Cloudflare headers are missing;
+- local/private clients may optionally bypass GeoIP because local traffic does not normally pass through Cloudflare.
+
+Cloudflare IP Geolocation (or the Add visitor location headers Managed Transform) must be enabled so the origin receives `CF-IPCountry`.
+
+The implementation also requires `CF-Ray` and `CF-Connecting-IP` before trusting `CF-IPCountry`. If Cloudflare headers are present, they take precedence over `request.remote`; this prevents a private cloudflared/reverse-proxy address from accidentally bypassing the country policy.
+
+GeoIP is not an authentication factor and should not be treated as exact location proof. It remains secondary to the integration's QR, device-secret, admin-window and Home Assistant authentication controls.
+
+For the country header to be meaningful, the public Home Assistant origin should not also be directly exposed to the Internet outside Cloudflare/Tunnel, because HTTP request headers are not cryptographic proof on a directly reachable origin.
 
 ## Installation
 
@@ -217,6 +238,7 @@ The feature is unavailable while disabled and combines:
 - per-IP/global rate limits
 - hard pending-session limits
 - repeated-secret-failure lockout
+- optional Cloudflare-backed country restriction
 
 Adding reCAPTCHA would introduce an external dependency and additional browser data sharing without strengthening the core authentication boundary.
 
@@ -226,7 +248,7 @@ QR SVG generation uses `segno==1.6.6`, pinned in `manifest.json`.
 
 ## Version
 
-Current integration version: **1.3.0**
+Current integration version: **1.4.0**
 
 ## License
 
