@@ -1,97 +1,166 @@
 # Secure QR Login for Home Assistant
 
-A security-focused Home Assistant custom integration that lets a new browser sign in by scanning a short-lived QR code with a Home Assistant session that is already authenticated.
+Secure QR Login is a security-focused Home Assistant custom integration that lets a new browser sign in by scanning a short-lived QR code with a Home Assistant session that is already authenticated.
 
 ## Security model
 
-Secure QR Login is **disabled by default**. An administrator opens a short login window; the secure default is **3 minutes**. At the end of that window the feature disables itself and every pending or undelivered login is invalidated.
+The integration is **OFF by default**. An administrator opens a short login window; the secure default is **180 seconds**.
 
-Each login request uses three independent values:
+Each request uses three independent values:
 
 1. **Session ID** — public request identifier.
-2. **Device secret** — 256-bit secret delivered only to the requesting browser. It never appears in the QR code and only its SHA-256 digest is retained server-side.
-3. **QR token** — independent short-lived value rotated every **10 seconds** by default and embedded only in the current QR code.
+2. **Device secret** — a high-entropy secret known only to the browser requesting login. It never appears in the QR code; only its SHA-256 digest is retained server-side.
+3. **QR token** — an independent bearer value rotated every **10 seconds** by default and embedded only in the current QR.
 
-The QR token can approve or deny a request. It **cannot retrieve credentials**. Credentials are delivered exactly once to the originating browser only after it proves possession of the separate device secret.
+The QR token can approve or deny a request, but it cannot retrieve credentials. Home Assistant credentials are delivered exactly once and only to the browser that proves possession of the separate device secret.
 
-## Features
+## Security controls
 
-### Temporary security window
 - OFF by default after Home Assistant starts.
-- Administrator-only enable/disable control.
-- Default duration: 180 seconds.
-- Configurable only within a conservative 60–300 second range.
-- Closing the window immediately invalidates all pending requests and revokes any token created but not yet delivered.
+- Administrator-only temporary enable/disable.
+- Login window configurable only from 60–300 seconds.
+- QR rotation configurable only from 5–30 seconds.
+- Per-IP and global request rate limits.
+- Hard limit of 1–5 simultaneous pending requests.
+- Strict same-origin policy for all state-changing POST endpoints.
+- Requests without an explicit same-origin `Origin` header are rejected.
+- Five invalid device-secret attempts permanently destroy that login request.
+- Old QR tokens become invalid immediately after rotation.
+- QR token is invalidated immediately after approve/deny.
+- Access and refresh tokens never appear in URLs.
+- Credential delivery is single-use.
+- Pending and undelivered sessions are invalidated when the security window closes.
+- Undelivered provisional refresh tokens are revoked after restart.
+- No external JavaScript or CSS dependencies.
+- CSP does not use `unsafe-inline`; CSS and JavaScript are served from local static files only.
+- Sensitive responses use `Cache-Control: no-store`.
+- Approval pages use `Referrer-Policy: no-referrer`.
+- Cross-account token minting is not supported.
 
-### Rotating QR
-- Default rotation: every 10 seconds.
-- Configurable from 5–30 seconds.
-- Expired QR tokens cannot approve a session.
-- Taking a screenshot of an old QR does not provide a reusable login credential.
+## Companion App
 
-### User allowlist
-- Optional allowlist of Home Assistant users.
-- If empty, all active non-system HA users may approve login **only for their own account**.
-- If configured, only selected users may approve.
-- Cross-account token issuance is not supported.
+The approval page supports the Home Assistant Companion App:
 
-### Pending-session limit
-- Default maximum: 3 simultaneous pending requests.
-- Configurable from 1–5.
-- This is in addition to per-IP and global rate limiting.
+- `homeassistant://navigate/...` deep-link handoff.
+- Android `externalAppV2` bridge.
+- Android legacy `externalApp` fallback.
+- iOS `webkit.messageHandlers.getExternalAuth`.
+- The integration requests only a temporary access token from the app.
+- The Companion App refresh token is never exposed to or stored by Secure QR Login.
+- Browser OAuth remains available as a fallback.
 
-### Phone notifications
-Configure one or more Home Assistant `notify.*` services, including Companion App `notify.mobile_app_*` services.
+## User allowlist
 
-Notifications can be enabled independently for:
-- approved QR logins
-- denied QR logins
+An optional allowlist controls which Home Assistant users may approve QR login.
 
-Notifications contain no session token, QR token, device secret, access token or refresh token.
+If the allowlist is empty, any active non-system HA user may approve a login **only for their own account**.
 
-### Active QR logins and manual revoke
-The admin panel lists active sessions created through Secure QR Login with:
+If configured, only selected users may approve.
+
+## Notifications
+
+One or more Home Assistant `notify.*` services can be selected, including Companion App services.
+
+Notifications may be enabled independently for:
+
+- approved logins
+- denied logins
+
+Notifications contain no authentication secrets.
+
+## Active QR logins
+
+The admin panel shows active logins created through this integration:
+
 - account
 - source IP
 - browser/user agent
 - sign-in time
 
-An administrator can press **Revoke**. The integration looks up the corresponding Home Assistant refresh token by its internal token ID and removes it through Home Assistant's authentication manager.
+An administrator can:
 
-The raw refresh-token secret is never stored by the integration.
+- revoke one QR-created login
+- **revoke all QR-created logins**
+- close the current login window
+- cancel all pending/provisional requests
 
-### Persistent security history
-Security events survive Home Assistant restarts. The history includes events such as:
+Revoke actions use Home Assistant's own refresh-token revocation mechanism.
+
+The integration stores only Home Assistant's non-secret internal refresh-token ID for later revocation; it does not persist the actual refresh token.
+
+## Security history
+
+Security history survives Home Assistant restarts and includes events such as:
+
 - login window enabled/disabled
 - session started
 - approved / denied
 - credentials delivered
+- session locked after invalid secrets
 - token revoked
+- all QR-created tokens revoked
 - expired request
 - externally revoked token detected
 - orphaned undelivered token automatically revoked
 
-The history length is configurable from 20–200 records.
+The admin panel also includes **Clear history**. Clearing history does not change active logins.
 
-### Restart-safe provisional token handling
-After approval, Home Assistant creates a refresh token before the requesting browser receives it. Secure QR Login persists only the **non-secret internal refresh-token ID** before reporting approval success.
+## Diagnostics
 
-If Home Assistant restarts during that small interval, the integration detects the undelivered token during startup and automatically revokes it. This prevents an orphaned valid token from surviving a restart.
-
-### Home Assistant diagnostics
-The integration supports HA config-entry diagnostics.
+Home Assistant config-entry diagnostics are supported.
 
 Diagnostics deliberately exclude:
+
 - IP addresses
-- browser/user-agent values
-- user IDs
+- user names and user IDs
+- browser/user-agent strings
 - session IDs
 - refresh-token IDs
 - access/refresh tokens
 - device secrets
 - QR tokens
 
-Only operational counts, version information, safe settings and event-type counts are exported.
+Only operational counts, safe settings, version information and event-type counts are exported.
+
+## Admin panel
+
+The sidebar admin panel displays:
+
+- current enabled/disabled state
+- live server-synchronised countdown
+- configured login-window duration
+- QR rotation interval
+- pending session count / limit
+- active QR-created logins
+- persistent security history
+- integration version/build
+
+The countdown updates locally for a smooth display but re-synchronises with the server every few seconds. The server remains authoritative.
+
+## Automated tests and releases
+
+GitHub Actions runs on every push and pull request.
+
+The test suite covers:
+
+- security primitives
+- secret separation
+- QR expiry and replay protection
+- strict Origin enforcement
+- rate limits
+- allowlist behavior
+- safe configuration bounds
+- persistent metadata
+- full HTTP login flow
+- one-time credential delivery
+- repeated invalid device-secret lockout
+- history clearing
+- bulk revocation
+- Python compilation
+- JSON validation
+- JavaScript syntax
+
+A GitHub release is created automatically only after the test job passes. Stale CI runs are prevented from publishing a release if `main` has moved forward.
 
 ## Configuration
 
@@ -110,8 +179,6 @@ Available settings:
 - Notify on approved
 - Notify on denied
 
-Security-sensitive numeric settings have enforced minimum/maximum ranges rather than accepting arbitrary values.
-
 ## Installation
 
 1. Add this repository to HACS as a custom **Integration** repository.
@@ -123,43 +190,33 @@ Security-sensitive numeric settings have enforced minimum/maximum ranges rather 
 ## Usage
 
 1. In the QR Login panel, press **Enable temporarily**.
-2. On the device that needs to sign in, open:
+2. On the new device open:
 
    `/secure_qr_login/start`
 
-3. Scan the displayed QR code with a phone/browser that is already signed in to the same Home Assistant instance.
-4. Verify the IP/browser information and press **Approve**.
-5. The requesting browser receives its Home Assistant credentials and opens the frontend.
-6. The new QR-created login is now visible under **Active QR logins**, where an administrator can revoke it.
-
-## Home Assistant entity
-
-The integration exposes `switch.secure_qr_login`.
-
-Turning it on opens a fresh bounded login window. Turning it off immediately closes the window and invalidates in-flight requests. The entity rejects non-administrator service calls.
-
-Its attributes expose:
-- remaining seconds
-- configured window duration
-- QR rotation interval
-- pending requests
-- maximum pending requests
-
-## Stored data
-
-The integration's persistent storage contains only security metadata required for history and revocation. It does **not** store authentication credentials.
-
-For active QR logins it stores the Home Assistant refresh token's internal ID, which is used only to find and revoke that token later. The actual refresh-token secret is not persisted.
+3. Scan the rotating QR code.
+4. Open the approval page in the Home Assistant Companion App or an authenticated browser.
+5. Verify the IP/browser details and press **Approve**.
+6. The requesting browser receives the credentials once and opens Home Assistant.
+7. The new QR-created login appears under **Active QR logins** and can be revoked later.
 
 ## Reverse proxies / Cloudflare
 
-Use a correctly configured Home Assistant reverse proxy and HTTPS. Home Assistant's standard trusted-proxy configuration remains your responsibility.
+Use HTTPS and a correctly configured Home Assistant reverse proxy. Home Assistant's normal trusted-proxy configuration remains your responsibility.
 
-Secure QR Login also performs same-origin checks for browser POST requests and never puts access/refresh tokens in URLs.
+The strict same-origin check compares the browser `Origin` to the host seen by Home Assistant, so proxy host/scheme handling must be configured correctly.
 
 ## Why there is no reCAPTCHA
 
-The feature is externally unavailable while disabled, is open only for a short administrator-controlled window, has a pending-session hard cap, per-IP/global rate limiting, rotating QR tokens and a device-bound credential exchange.
+The feature is unavailable while disabled and combines:
+
+- short administrator-controlled windows
+- rotating QR tokens
+- independent device secrets
+- strict same-origin POST enforcement
+- per-IP/global rate limits
+- hard pending-session limits
+- repeated-secret-failure lockout
 
 Adding reCAPTCHA would introduce an external dependency and additional browser data sharing without strengthening the core authentication boundary.
 
@@ -169,7 +226,7 @@ QR SVG generation uses `segno==1.6.6`, pinned in `manifest.json`.
 
 ## Version
 
-Current integration version: **1.1.0**
+Current integration version: **1.3.0**
 
 ## License
 
