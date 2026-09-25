@@ -97,10 +97,13 @@
         Allow private / local network clients without country filtering
       </label>
 
+      <div id="geoWarning" class="notice error" hidden></div>
       <div id="geoStatus" class="notice muted"></div>
+      <div id="geoTimes" class="notice muted"></div>
       <div id="settingsMessage" class="notice"></div>
 
       <div class="actions">
+        <button id="geoUpdate" class="off">Check for GeoIP update</button>
         <button id="saveSettings" class="on">Save settings</button>
       </div>
     </div>
