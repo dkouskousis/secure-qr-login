@@ -734,7 +734,12 @@ class AdminSettingsView(HomeAssistantView):
             }
         )
 
-        await manager.async_update_settings(options)
+        try:
+            await manager.async_update_settings(options)
+        except Exception:
+            _LOGGER.exception("Unable to save Secure QR Login settings")
+            return _json(self, {"error": "settings_save_failed"}, 500)
+
         return _json(self, {"status": "saved"})
 
 
@@ -755,7 +760,12 @@ class AdminGeoIPUpdateView(HomeAssistantView):
         if manager is None:
             return _json(self, {"error": "not_ready"}, 503)
 
-        result = await manager.async_manual_geoip_update()
+        try:
+            result = await manager.async_manual_geoip_update()
+        except Exception:
+            _LOGGER.exception("Unexpected error during manual GeoIP update")
+            return _json(self, {"error": "geoip_update_internal_error"}, 500)
+
         return _json(
             self,
             {
