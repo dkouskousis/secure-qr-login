@@ -14,6 +14,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import partial
 import gzip
 from ipaddress import ip_address
 import json
@@ -253,9 +254,6 @@ class LocalGeoIPResolver:
     ) -> GeoIPUpdateResult | None:
         target = self._current_release()
 
-        # Normal scheduled checks stay silent while the current month's DB is
-        # already installed. A manual check still updates "last attempt" and
-        # reports that no download was required.
         if self._reader is not None and self._database_release == target:
             if not force:
                 return None
@@ -283,14 +281,10 @@ class LocalGeoIPResolver:
                 status="updated",
             )
 
-        # DB-IP publishes monthly. At the beginning of a month the current file
-        # may not yet be available, so fall back to the previous month.
         previous = self._previous_month()
         previous_release = f"{previous.year:04d}-{previous.month:02d}"
 
         if self._database_release == previous_release and error == "not_found":
-            # The newest published DB is already installed. This is not an
-            # operational failure and should not display a warning.
             self._last_error = None
             await self._async_write_metadata()
             return self._update_result(
@@ -370,11 +364,17 @@ class LocalGeoIPResolver:
         url = _DOWNLOAD_TEMPLATE.format(year=year, month=month)
         release = f"{year:04d}-{month:02d}"
 
-        await self.hass.async_add_executor_job(
-            self._directory.mkdir,
-            parents=True,
-            exist_ok=True,
-        )
+        # HomeAssistant.async_add_executor_job forwards positional arguments only.
+        # Use partial so pathlib's keyword-only mkdir options are evaluated inside
+        # the executor instead of being passed to Home Assistant itself.
+        try:
+            await self.hass.async_add_executor_job(
+                partial(self._directory.mkdir, parents=True, exist_ok=True)
+            )
+        except OSError as err:
+            code = f"database_directory_failed:{type(err).__name__}"
+            _LOGGER.warning("Unable to create GeoIP storage directory: %s", err)
+            return False, code
 
         archive_tmp = self._directory / f"{_DB_FILENAME}.{release}.gz.tmp"
         database_tmp = self._directory / f"{_DB_FILENAME}.{release}.tmp"
@@ -387,8 +387,13 @@ class LocalGeoIPResolver:
                 response.raise_for_status()
 
                 content_length = response.content_length
-                if content_length is not None and content_length > _MAX_ARCHIVE_BYTES:
-                    raise ValueError("GeoIP archive is larger than the allowed limit")
+                if (
+                    content_length is not None
+                    and content_length > _MAX_ARCHIVE_BYTES
+                ):
+                    raise ValueError(
+                        "GeoIP archive is larger than the allowed limit"
+                    )
 
                 archive_data = await response.read()
                 if len(archive_data) > _MAX_ARCHIVE_BYTES:
@@ -443,7 +448,10 @@ class LocalGeoIPResolver:
                 if isinstance(sample, dict)
                 else None
             )
-            if not isinstance(country, str) or country.upper() not in ISO_COUNTRY_CODES:
+            if (
+                not isinstance(country, str)
+                or country.upper() not in ISO_COUNTRY_CODES
+            ):
                 raise ValueError("Downloaded GeoIP database failed validation")
         finally:
             reader.close()
