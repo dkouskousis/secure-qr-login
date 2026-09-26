@@ -263,7 +263,7 @@ Country data is provided by **DB-IP Country Lite** and stored locally under Home
 
 ## Version
 
-Current integration version: **1.5.3**
+Current integration version: **1.5.4**
 
 ## License
 
