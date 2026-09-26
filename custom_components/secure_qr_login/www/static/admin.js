@@ -9,6 +9,9 @@
   const clearHistoryButton = document.getElementById('clearHistory');
   const saveSettingsButton = document.getElementById('saveSettings');
   const geoUpdateButton = document.getElementById('geoUpdate');
+  const tabButtons = Array.from(document.querySelectorAll('.tab-button'));
+  const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
+  const loginsBadge = document.getElementById('loginsBadge');
 
   let accessToken = null;
   let refreshToken = null;
@@ -212,12 +215,44 @@
     return response;
   }
 
-  const textCell = (value, className = '') => {
+  const textCell = (value, className = '', label = '') => {
     const td = document.createElement('td');
     td.textContent = value || '—';
     if (className) td.className = className;
+    if (label) td.dataset.label = label;
     return td;
   };
+
+  function activateTab(name, persist = true) {
+    const target = tabPanels.find(panel => panel.dataset.panel === name);
+    if (!target) return;
+
+    for (const button of tabButtons) {
+      button.classList.toggle('active', button.dataset.tab === name);
+      button.setAttribute(
+        'aria-selected',
+        button.dataset.tab === name ? 'true' : 'false'
+      );
+    }
+
+    for (const panel of tabPanels) {
+      panel.classList.toggle('active', panel === target);
+    }
+
+    if (persist) {
+      try {
+        localStorage.setItem('secureQrLoginAdminTab', name);
+      } catch {}
+    }
+  }
+
+  function restoreTab() {
+    let saved = 'overview';
+    try {
+      saved = localStorage.getItem('secureQrLoginAdminTab') || 'overview';
+    } catch {}
+    activateTab(saved, false);
+  }
 
   const selectedValues = (select) =>
     Array.from(select.selectedOptions).map(option => option.value);
@@ -256,15 +291,20 @@
     for (const item of items) {
       const tr = document.createElement('tr');
       tr.append(
-        textCell(item.user_name),
-        textCell(item.client_ip),
-        textCell(item.user_agent, 'agent'),
-        textCell(item.delivered_at
-          ? new Date(item.delivered_at * 1000).toLocaleString()
-          : '—')
+        textCell(item.user_name, '', 'Account'),
+        textCell(item.client_ip, '', 'IP address'),
+        textCell(item.user_agent, 'agent', 'Browser / device'),
+        textCell(
+          item.delivered_at
+            ? new Date(item.delivered_at * 1000).toLocaleString()
+            : '—',
+          '',
+          'Signed in'
+        )
       );
 
       const action = document.createElement('td');
+      action.dataset.label = 'Action';
       const button = document.createElement('button');
       button.className = 'revoke';
       button.textContent = 'Revoke';
@@ -290,11 +330,15 @@
     for (const item of items) {
       const tr = document.createElement('tr');
       tr.append(
-        textCell(item.at ? new Date(item.at * 1000).toLocaleString() : '—'),
-        textCell(item.event),
-        textCell(item.user_name),
-        textCell(item.client_ip),
-        textCell(item.detail)
+        textCell(
+          item.at ? new Date(item.at * 1000).toLocaleString() : '—',
+          '',
+          'Time'
+        ),
+        textCell(item.event, '', 'Event'),
+        textCell(item.user_name, '', 'Account'),
+        textCell(item.client_ip, '', 'IP address'),
+        textCell(item.detail, '', 'Details')
       );
       historyBody.append(tr);
     }
@@ -321,9 +365,13 @@
     document.getElementById('rotation').textContent = `${d.qr_lifetime_seconds}s`;
     document.getElementById('pending').textContent =
       `${d.pending_sessions} / ${d.max_pending_sessions}`;
-    document.getElementById('activeCount').textContent =
-      String((d.active || []).length);
+    const activeCount = (d.active || []).length;
+    document.getElementById('activeCount').textContent = String(activeCount);
+    loginsBadge.textContent = String(activeCount);
+    loginsBadge.hidden = activeCount === 0;
+
     document.getElementById('version').textContent = d.version || '—';
+    document.getElementById('overviewVersion').textContent = d.version || '—';
     document.getElementById('build').textContent = d.build || '—';
 
     renderActive(d.active || []);
@@ -583,6 +631,8 @@
   }
 
   async function boot() {
+    restoreTab();
+
     status.textContent = 'Authenticating…';
     status.className = 'status';
     countdown.textContent =
@@ -604,6 +654,11 @@
 
     setInterval(renderCountdown, 250);
     setInterval(state, 5000);
+  }
+
+  for (const button of tabButtons) {
+    button.setAttribute('role', 'tab');
+    button.addEventListener('click', () => activateTab(button.dataset.tab));
   }
 
   document.getElementById('enable').addEventListener(
