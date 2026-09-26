@@ -451,3 +451,60 @@ async def test_admin_can_trigger_manual_geoip_update(
     payload = await response.json()
     assert payload["status"] == "up_to_date"
     assert payload["release"] == "2026-09"
+
+
+async def test_settings_backend_exception_returns_json_error(
+    hass_client,
+    qr_manager,
+    monkeypatch,
+) -> None:
+    """Unexpected settings errors remain machine-readable for the admin UI."""
+    client = await hass_client()
+
+    async def fail_settings(_options):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(qr_manager, "async_update_settings", fail_settings)
+
+    response = await client.post(
+        "/api/secure_qr_login/admin/settings",
+        json={
+            "enable_window_seconds": 180,
+            "qr_lifetime_seconds": 10,
+            "max_pending_sessions": 3,
+            "history_limit": 100,
+            "allowed_user_ids": [],
+            "notify_services": [],
+            "notify_on_approved": True,
+            "notify_on_denied": True,
+            "allowed_countries": ["GR"],
+            "allow_private_networks": True,
+        },
+        headers={"Origin": _origin(client)},
+    )
+
+    assert response.status == 500
+    assert (await response.json())["error"] == "settings_save_failed"
+
+
+async def test_geoip_backend_exception_returns_json_error(
+    hass_client,
+    qr_manager,
+    monkeypatch,
+) -> None:
+    """Unexpected GeoIP errors do not degrade into an HTML 500 response."""
+    client = await hass_client()
+
+    async def fail_update():
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(qr_manager, "async_manual_geoip_update", fail_update)
+
+    response = await client.post(
+        "/api/secure_qr_login/admin/geoip-update",
+        json={},
+        headers={"Origin": _origin(client)},
+    )
+
+    assert response.status == 500
+    assert (await response.json())["error"] == "geoip_update_internal_error"
