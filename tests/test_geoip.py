@@ -118,3 +118,46 @@ async def test_failed_manual_update_preserves_existing_database(
     assert result.status == "failed"
     assert result.error == "database_update_failed:TestError"
     assert resolver._reader is reader
+
+
+async def test_download_creates_storage_directory_without_executor_kwargs(
+    hass,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """Regression test for HA executor calls with pathlib keyword arguments."""
+    from custom_components.secure_qr_login import geoip as geoip_module
+
+    class NotFoundResponse:
+        status = 404
+        content_length = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+    class FakeSession:
+        def get(self, *_args, **_kwargs):
+            return NotFoundResponse()
+
+    resolver = LocalGeoIPResolver(hass)
+    resolver._directory = tmp_path / "geoip"
+    resolver._database_path = resolver._directory / "dbip-country-lite.mmdb"
+    resolver._metadata_path = resolver._directory / "dbip-country-lite.json"
+
+    monkeypatch.setattr(
+        geoip_module,
+        "async_get_clientsession",
+        lambda _hass: FakeSession(),
+    )
+
+    ok, error = await resolver._async_download_release(2099, 12)
+
+    assert not ok
+    assert error == "not_found"
+    assert resolver._directory.is_dir()
