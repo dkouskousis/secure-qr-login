@@ -7,138 +7,306 @@
   <link rel="stylesheet" href="/secure_qr_login/static/app.css">
 </head>
 <body class="admin-page">
-  <div class="wrap">
-    <div class="card">
-      <h1>Secure QR Login</h1>
-      <div id="status" class="status">—</div>
-      <p id="countdown" class="muted"></p>
-
-      <div class="actions">
-        <button id="enable" class="on">Enable temporarily</button>
-        <button id="disable" class="off">Disable now</button>
-        <a class="button off" href="/secure_qr_login/start" target="_blank" rel="noopener">Open login screen</a>
+  <div class="admin-shell">
+    <header class="admin-header">
+      <div>
+        <div class="eyebrow">Home Assistant security</div>
+        <h1>Secure QR Login</h1>
+        <p class="header-subtitle">Manage temporary QR access, security policy and login activity.</p>
       </div>
 
-      <div class="grid">
-        <div class="metric"><span class="muted">Window</span><strong id="window">—</strong></div>
-        <div class="metric"><span class="muted">QR rotation</span><strong id="rotation">—</strong></div>
-        <div class="metric"><span class="muted">Pending</span><strong id="pending">—</strong></div>
-        <div class="metric"><span class="muted">Active logins</span><strong id="activeCount">—</strong></div>
+      <div class="header-meta">
+        <span class="version-chip">v<span id="version">—</span></span>
       </div>
+    </header>
 
-      <div class="version">
-        Integration <span id="version">—</span> · Build <span id="build">—</span>
-      </div>
-    </div>
+    <nav class="tabs" aria-label="Secure QR Login sections">
+      <button class="tab-button active" data-tab="overview" type="button">
+        <span>Overview</span>
+      </button>
+      <button class="tab-button" data-tab="settings" type="button">
+        <span>Settings</span>
+      </button>
+      <button class="tab-button" data-tab="logins" type="button">
+        <span>Active logins</span>
+        <span id="loginsBadge" class="tab-badge">0</span>
+      </button>
+      <button class="tab-button" data-tab="history" type="button">
+        <span>History</span>
+      </button>
+    </nav>
 
-    <div class="card">
-      <h2>Settings</h2>
-      <p class="muted small">
-        Saving settings closes any currently open QR-login window and cancels pending requests.
-        Existing delivered logins are not revoked.
-      </p>
+    <main class="tab-content">
+      <section class="tab-panel active" data-panel="overview">
+        <div class="hero-card">
+          <div class="hero-status">
+            <div>
+              <div class="section-kicker">Temporary login window</div>
+              <div id="status" class="status">—</div>
+              <p id="countdown" class="status-detail muted"></p>
+            </div>
 
-      <div class="form-grid">
-        <label>
-          <span>Login window (seconds)</span>
-          <input id="settingWindow" type="number" min="60" max="300" step="10">
-        </label>
+            <div class="hero-actions">
+              <button id="enable" class="btn btn-primary">Enable temporarily</button>
+              <button id="disable" class="btn btn-secondary">Disable now</button>
+              <a class="btn btn-ghost" href="/secure_qr_login/start" target="_blank" rel="noopener">
+                Open login screen
+              </a>
+            </div>
+          </div>
 
-        <label>
-          <span>QR rotation (seconds)</span>
-          <input id="settingQr" type="number" min="5" max="30" step="1">
-        </label>
+          <div class="metrics-grid">
+            <article class="metric-card">
+              <span class="metric-label">Window</span>
+              <strong id="window">—</strong>
+              <span class="metric-caption">Maximum open duration</span>
+            </article>
+            <article class="metric-card">
+              <span class="metric-label">QR rotation</span>
+              <strong id="rotation">—</strong>
+              <span class="metric-caption">Token refresh interval</span>
+            </article>
+            <article class="metric-card">
+              <span class="metric-label">Pending</span>
+              <strong id="pending">—</strong>
+              <span class="metric-caption">Current requests / limit</span>
+            </article>
+            <article class="metric-card">
+              <span class="metric-label">Active logins</span>
+              <strong id="activeCount">—</strong>
+              <span class="metric-caption">QR-created sessions</span>
+            </article>
+          </div>
+        </div>
 
-        <label>
-          <span>Maximum pending sessions</span>
-          <input id="settingPending" type="number" min="1" max="5" step="1">
-        </label>
+        <div class="info-grid">
+          <article class="surface-card">
+            <div class="card-heading">
+              <div>
+                <div class="section-kicker">Security posture</div>
+                <h2>Protection status</h2>
+              </div>
+            </div>
+            <div class="security-list">
+              <div><span>Short-lived QR tokens</span><strong class="good">Enabled</strong></div>
+              <div><span>Device-bound secret</span><strong class="good">Enabled</strong></div>
+              <div><span>Same-origin POST policy</span><strong class="good">Enabled</strong></div>
+              <div><span>One-time credential delivery</span><strong class="good">Enabled</strong></div>
+            </div>
+          </article>
 
-        <label>
-          <span>History entries</span>
-          <input id="settingHistory" type="number" min="20" max="200" step="10">
-        </label>
-      </div>
+          <article class="surface-card">
+            <div class="card-heading">
+              <div>
+                <div class="section-kicker">Build</div>
+                <h2>Integration details</h2>
+              </div>
+            </div>
+            <div class="detail-list">
+              <div><span>Version</span><strong id="overviewVersion">—</strong></div>
+              <div><span>Build</span><strong id="build">—</strong></div>
+              <div><span>Runtime</span><strong>Home Assistant</strong></div>
+            </div>
+          </article>
+        </div>
+      </section>
 
-      <label class="field">
-        <span>Allowed users</span>
-        <select id="settingUsers" multiple size="5"></select>
-        <small>Leave empty to allow all active non-system Home Assistant users.</small>
-      </label>
+      <section class="tab-panel" data-panel="settings">
+        <div class="settings-layout">
+          <article class="surface-card">
+            <div class="card-heading">
+              <div>
+                <div class="section-kicker">Core policy</div>
+                <h2>Login controls</h2>
+                <p class="muted">Saving settings closes any open QR-login window and cancels pending requests.</p>
+              </div>
+            </div>
 
-      <label class="field">
-        <span>Notification targets</span>
-        <select id="settingNotify" multiple size="5"></select>
-      </label>
+            <div class="form-grid">
+              <label class="control">
+                <span>Login window</span>
+                <div class="input-with-suffix">
+                  <input id="settingWindow" type="number" min="60" max="300" step="10">
+                  <span>sec</span>
+                </div>
+              </label>
 
-      <div class="check-grid">
-        <label><input id="settingNotifyApproved" type="checkbox"> Notify on approved login</label>
-        <label><input id="settingNotifyDenied" type="checkbox"> Notify on denied login</label>
-      </div>
+              <label class="control">
+                <span>QR rotation</span>
+                <div class="input-with-suffix">
+                  <input id="settingQr" type="number" min="5" max="30" step="1">
+                  <span>sec</span>
+                </div>
+              </label>
 
-      <hr>
+              <label class="control">
+                <span>Maximum pending sessions</span>
+                <input id="settingPending" type="number" min="1" max="5" step="1">
+              </label>
 
-      <h3>Country restriction</h3>
-      <p class="muted small">
-        The client IP accepted by Home Assistant is resolved locally using an offline IPv4/IPv6 GeoIP database.
-        This works with Nabu Casa Remote UI and correctly configured reverse proxies/tunnels.
-        No client IP is sent to an external GeoIP lookup service. Leave the list empty to disable country filtering.
-        <a href="https://db-ip.com" target="_blank" rel="noopener noreferrer">IP Geolocation by DB-IP</a>.
-      </p>
+              <label class="control">
+                <span>History entries</span>
+                <input id="settingHistory" type="number" min="20" max="200" step="10">
+              </label>
+            </div>
+          </article>
 
-      <label class="field">
-        <span>Allowed countries</span>
-        <select id="settingCountries" multiple size="8"></select>
-        <small>Select one or more countries. Hold Ctrl/Cmd to select multiple items on desktop.</small>
-      </label>
+          <article class="surface-card">
+            <div class="card-heading">
+              <div>
+                <div class="section-kicker">Access</div>
+                <h2>Users & notifications</h2>
+              </div>
+            </div>
 
-      <label class="check-row">
-        <input id="settingPrivate" type="checkbox">
-        Allow private / local network clients without country filtering
-      </label>
+            <div class="settings-columns">
+              <label class="control">
+                <span>Allowed users</span>
+                <select id="settingUsers" multiple size="6"></select>
+                <small>Leave empty to allow all active non-system Home Assistant users.</small>
+              </label>
 
-      <div id="geoWarning" class="notice error" hidden></div>
-      <div id="geoStatus" class="notice muted"></div>
-      <div id="geoTimes" class="notice muted"></div>
-      <div id="settingsMessage" class="notice"></div>
+              <label class="control">
+                <span>Notification targets</span>
+                <select id="settingNotify" multiple size="6"></select>
+              </label>
+            </div>
 
-      <div class="actions">
-        <button id="geoUpdate" class="off">Check for GeoIP update</button>
-        <button id="saveSettings" class="on">Save settings</button>
-      </div>
-    </div>
+            <div class="toggle-grid">
+              <label class="toggle-row">
+                <span>
+                  <strong>Approved login notification</strong>
+                  <small>Send a notification after successful approval.</small>
+                </span>
+                <input id="settingNotifyApproved" type="checkbox">
+              </label>
 
-    <div class="card">
-      <h2>Active QR logins</h2>
-      <p class="muted">Only tokens created by this integration are shown.</p>
+              <label class="toggle-row">
+                <span>
+                  <strong>Denied login notification</strong>
+                  <small>Send a notification after a login is denied.</small>
+                </span>
+                <input id="settingNotifyDenied" type="checkbox">
+              </label>
+            </div>
+          </article>
 
-      <div class="actions">
-        <button id="revokeAll" class="destructive">Revoke all QR logins</button>
-      </div>
+          <article class="surface-card">
+            <div class="card-heading split-heading">
+              <div>
+                <div class="section-kicker">GeoIP policy</div>
+                <h2>Country restriction</h2>
+                <p class="muted">
+                  Client IPs are resolved locally with an offline IPv4/IPv6 database.
+                  Leave the list empty to disable country filtering.
+                </p>
+              </div>
+              <a class="text-link" href="https://db-ip.com" target="_blank" rel="noopener noreferrer">DB-IP</a>
+            </div>
 
-      <div class="tablewrap">
-        <table>
-          <thead><tr><th>Account</th><th>IP</th><th>Browser</th><th>Signed in</th><th></th></tr></thead>
-          <tbody id="active"></tbody>
-        </table>
-      </div>
-      <div id="activeEmpty" class="empty" hidden>No active QR-created logins.</div>
-    </div>
+            <div class="settings-columns geo-columns">
+              <label class="control">
+                <span>Allowed countries</span>
+                <select id="settingCountries" multiple size="10"></select>
+                <small>Hold Ctrl/Cmd to select multiple countries on desktop.</small>
+              </label>
 
-    <div class="card">
-      <h2>Security history</h2>
-      <div class="actions">
-        <button id="clearHistory" class="secondary-danger">Clear history</button>
-      </div>
+              <div class="geo-side">
+                <label class="toggle-row">
+                  <span>
+                    <strong>Allow private / local clients</strong>
+                    <small>Bypass country filtering for trusted local addresses.</small>
+                  </span>
+                  <input id="settingPrivate" type="checkbox">
+                </label>
 
-      <div class="tablewrap">
-        <table>
-          <thead><tr><th>Time</th><th>Event</th><th>Account</th><th>IP</th><th>Details</th></tr></thead>
-          <tbody id="history"></tbody>
-        </table>
-      </div>
-      <div id="historyEmpty" class="empty" hidden>No history yet.</div>
-    </div>
+                <div id="geoWarning" class="notice notice-error" hidden></div>
+                <div id="geoStatus" class="notice notice-neutral"></div>
+                <div id="geoTimes" class="notice notice-subtle"></div>
+
+                <button id="geoUpdate" class="btn btn-secondary">Check for GeoIP update</button>
+              </div>
+            </div>
+          </article>
+
+          <div id="settingsMessage" class="notice"></div>
+
+          <div class="sticky-save">
+            <div>
+              <strong>Security settings</strong>
+              <span class="muted">Changes apply immediately after saving.</span>
+            </div>
+            <button id="saveSettings" class="btn btn-primary">Save settings</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-panel" data-panel="logins">
+        <article class="surface-card">
+          <div class="card-heading split-heading">
+            <div>
+              <div class="section-kicker">Session control</div>
+              <h2>Active QR logins</h2>
+              <p class="muted">Only sessions created by Secure QR Login are shown here.</p>
+            </div>
+            <button id="revokeAll" class="btn btn-danger">Revoke all</button>
+          </div>
+
+          <div class="tablewrap modern-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Account</th>
+                  <th>IP address</th>
+                  <th>Browser / device</th>
+                  <th>Signed in</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="active"></tbody>
+            </table>
+          </div>
+
+          <div id="activeEmpty" class="empty-state" hidden>
+            <strong>No active QR logins</strong>
+            <span>New QR-created sessions will appear here.</span>
+          </div>
+        </article>
+      </section>
+
+      <section class="tab-panel" data-panel="history">
+        <article class="surface-card">
+          <div class="card-heading split-heading">
+            <div>
+              <div class="section-kicker">Audit trail</div>
+              <h2>Security history</h2>
+              <p class="muted">Recent authentication and policy events from this integration.</p>
+            </div>
+            <button id="clearHistory" class="btn btn-danger-outline">Clear history</button>
+          </div>
+
+          <div class="tablewrap modern-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Event</th>
+                  <th>Account</th>
+                  <th>IP address</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody id="history"></tbody>
+            </table>
+          </div>
+
+          <div id="historyEmpty" class="empty-state" hidden>
+            <strong>No security history</strong>
+            <span>Security events will appear here as they occur.</span>
+          </div>
+        </article>
+      </section>
+    </main>
   </div>
 
   <script src="/secure_qr_login/static/admin.js"></script>
