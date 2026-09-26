@@ -1,7 +1,7 @@
 {
   "domain": "secure_qr_login",
   "name": "Secure QR Login",
-  "version": "1.5.4",
+  "version": "1.6.0",
   "config_flow": true,
   "documentation": "https://github.com/dkouskousis/secure-qr-login",
   "issue_tracker": "https://github.com/dkouskousis/secure-qr-login/issues",
