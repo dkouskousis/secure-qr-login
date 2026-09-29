@@ -123,10 +123,36 @@ def _json(view: HomeAssistantView, payload: dict, status: int = 200):
     return view.json(payload, status_code=status, headers=NO_STORE_HEADERS)
 
 
-def _reject_cross_origin(view: HomeAssistantView, request: web.Request):
-    """Reject POSTs without an explicit same-origin Origin header."""
+def _reject_cross_origin(
+    view: HomeAssistantView,
+    request: web.Request,
+    *,
+    allow_authenticated_bearer: bool = False,
+):
+    """Reject unsafe cross-origin POSTs.
+
+    Public QR endpoints still require an explicit same-origin Origin header.
+
+    Authenticated Home Assistant endpoints may additionally accept an already
+    validated Bearer-authenticated request. This is required for Companion App
+    WebViews, which can omit or alter Origin while still sending the HA access
+    token explicitly in the Authorization header.
+
+    A third-party site cannot use this fallback for CSRF because it cannot read
+    the Home Assistant bearer token from the HA origin.
+    """
     if same_origin_request(request):
         return None
+
+    if allow_authenticated_bearer:
+        authorization = request.headers.get("Authorization", "")
+        user = request.get("hass_user")
+        if (
+            user is not None
+            and authorization.lower().startswith("bearer ")
+        ):
+            return None
+
     return _json(view, {"error": "origin_rejected"}, 403)
 
 
@@ -442,7 +468,11 @@ class ApprovalActionView(HomeAssistantView):
     requires_auth = True
 
     async def post(self, request: web.Request) -> web.Response:
-        if rejected := _reject_cross_origin(self, request):
+        if rejected := _reject_cross_origin(
+            self,
+            request,
+            allow_authenticated_bearer=True,
+        ):
             return rejected
 
         manager = _manager(request)
@@ -624,7 +654,11 @@ class AdminSettingsView(HomeAssistantView):
         )
 
     async def post(self, request: web.Request) -> web.Response:
-        if rejected := _reject_cross_origin(self, request):
+        if rejected := _reject_cross_origin(
+            self,
+            request,
+            allow_authenticated_bearer=True,
+        ):
             return rejected
         if rejected := _require_admin(self, request):
             return rejected
@@ -751,7 +785,11 @@ class AdminGeoIPUpdateView(HomeAssistantView):
     requires_auth = True
 
     async def post(self, request: web.Request) -> web.Response:
-        if rejected := _reject_cross_origin(self, request):
+        if rejected := _reject_cross_origin(
+            self,
+            request,
+            allow_authenticated_bearer=True,
+        ):
             return rejected
         if rejected := _require_admin(self, request):
             return rejected
@@ -787,7 +825,11 @@ class AdminWindowView(HomeAssistantView):
     requires_auth = True
 
     async def post(self, request: web.Request) -> web.Response:
-        if rejected := _reject_cross_origin(self, request):
+        if rejected := _reject_cross_origin(
+            self,
+            request,
+            allow_authenticated_bearer=True,
+        ):
             return rejected
         if rejected := _require_admin(self, request):
             return rejected
@@ -822,7 +864,11 @@ class AdminRevokeView(HomeAssistantView):
     requires_auth = True
 
     async def post(self, request: web.Request) -> web.Response:
-        if rejected := _reject_cross_origin(self, request):
+        if rejected := _reject_cross_origin(
+            self,
+            request,
+            allow_authenticated_bearer=True,
+        ):
             return rejected
         if rejected := _require_admin(self, request):
             return rejected
@@ -857,7 +903,11 @@ class AdminRevokeAllView(HomeAssistantView):
     requires_auth = True
 
     async def post(self, request: web.Request) -> web.Response:
-        if rejected := _reject_cross_origin(self, request):
+        if rejected := _reject_cross_origin(
+            self,
+            request,
+            allow_authenticated_bearer=True,
+        ):
             return rejected
         if rejected := _require_admin(self, request):
             return rejected
@@ -881,7 +931,11 @@ class AdminClearHistoryView(HomeAssistantView):
     requires_auth = True
 
     async def post(self, request: web.Request) -> web.Response:
-        if rejected := _reject_cross_origin(self, request):
+        if rejected := _reject_cross_origin(
+            self,
+            request,
+            allow_authenticated_bearer=True,
+        ):
             return rejected
         if rejected := _require_admin(self, request):
             return rejected
