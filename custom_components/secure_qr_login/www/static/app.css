@@ -118,7 +118,7 @@ tbody tr:last-child td{border-bottom:0}
 .row{display:flex;justify-content:space-between;gap:16px;padding:10px 0;border-bottom:1px solid var(--border-soft)}
 .value{text-align:right;word-break:break-word}
 #qr{width:280px;height:280px;margin:24px auto;background:#fff;border-radius:12px;padding:12px}
-#qr img{width:100%;height:100%;display:block}
+#qr img,#qr svg{width:100%;height:100%;display:block}
 .bar{height:5px;background:var(--panel-3);border-radius:99px;overflow:hidden;margin-top:14px}
 #progress{height:100%;background:var(--accent);transform-origin:left}
 code{background:var(--panel-3);border-radius:5px;padding:2px 5px}
