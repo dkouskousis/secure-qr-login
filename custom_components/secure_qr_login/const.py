@@ -2,7 +2,7 @@
 
 DOMAIN = "secure_qr_login"
 NAME = "Secure QR Login"
-VERSION = "1.6.1"
+VERSION = "1.6.2"
 
 PLATFORMS = ["switch"]
 
