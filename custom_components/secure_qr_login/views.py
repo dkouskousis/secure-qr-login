@@ -986,6 +986,7 @@ class StaticView(HomeAssistantView):
         "start.js": "application/javascript",
         "approve.js": "application/javascript",
         "admin.js": "application/javascript",
+        "panel.js": "application/javascript",
         "app.css": "text/css",
     }
 
