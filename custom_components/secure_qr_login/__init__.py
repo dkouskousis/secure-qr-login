@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from homeassistant.components import frontend
+from homeassistant.components import frontend, panel_custom
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, PANEL_URL_PATH, PLATFORMS
+from .const import DOMAIN, PANEL_URL_PATH, PLATFORMS, VERSION
 from .manager import SecureQrLoginManager
 from .views import register_views
 
@@ -23,15 +23,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         register_views(hass)
         hass.data[_VIEWS_REGISTERED] = True
 
-    frontend.async_register_built_in_panel(
+    # Register as a real Home Assistant custom panel, not an iframe.
+    # The Android Companion App intentionally rejects external-auth requests
+    # originating from iframes. A native custom panel receives the authenticated
+    # `hass` object directly and can use hass.callApi() on every platform.
+    await panel_custom.async_register_panel(
         hass,
-        component_name="iframe",
+        frontend_url_path=PANEL_URL_PATH,
+        webcomponent_name="secure-qr-login-panel",
         sidebar_title="QR Login",
         sidebar_icon="mdi:qrcode-scan",
-        frontend_url_path=PANEL_URL_PATH,
-        config={"url": "/secure_qr_login/admin"},
+        module_url=f"/secure_qr_login/static/panel.js?v={VERSION}",
+        embed_iframe=False,
+        trust_external=False,
         require_admin=True,
-        update=True,
+        handle_safe_area=False,
     )
 
     # Settings are read dynamically from entry.options and are updated by the
