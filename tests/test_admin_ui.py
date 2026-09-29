@@ -81,7 +81,18 @@ def test_qr_entry_redirects_existing_authenticated_session() -> None:
     assert "requestExternalAuth" in js
     assert "window.location.replace('/')" in js
 
-    # The authentication check must happen before creating a QR session.
-    assert js.index("await alreadyAuthenticated()") < js.index(
-        "post('/api/secure_qr_login/start'"
-    )
+    # The authentication check must happen before beginLogin() is called.
+    # Keep this syntax-agnostic because start.js intentionally uses legacy
+    # callback-style JavaScript for Samsung/Tizen browser compatibility.
+    init_start = js.index("function init()")
+    init_end = js.index("\n  init();", init_start)
+    init_block = js[init_start:init_end]
+
+    assert "alreadyAuthenticated(function (authenticated)" in init_block
+    assert "if (authenticated)" in init_block
+    assert init_block.index(
+        "alreadyAuthenticated(function (authenticated)"
+    ) < init_block.index("beginLogin();")
+
+    # beginLogin() is the only place that creates the new QR session.
+    assert "postJson('/api/secure_qr_login/start'" in js
