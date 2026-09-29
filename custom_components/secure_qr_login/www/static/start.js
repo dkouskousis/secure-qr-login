@@ -1,244 +1,367 @@
-(() => {
-  const state = document.getElementById('state');
-  const qrBox = document.getElementById('qr');
-  const progress = document.getElementById('progress');
+(function () {
+  'use strict';
 
-  const clientIdDefault = location.origin + '/';
+  var state = document.getElementById('state');
+  var qrBox = document.getElementById('qr');
+  var progress = document.getElementById('progress');
 
-  let sessionId = '';
-  let deviceSecret = '';
-  let qrTimer = null;
-  let pollTimer = null;
-  let qrLifetime = 10;
-  let externalAuthResolve = null;
+  var sessionId = '';
+  var deviceSecret = '';
+  var qrTimer = null;
+  var pollTimer = null;
+  var qrLifetime = 10;
+  var externalAuthCallback = null;
 
-  const post = async (url, body) => fetch(url, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(body),
-    cache: 'no-store'
-  });
+  function currentOrigin() {
+    if (window.location.origin) {
+      return window.location.origin;
+    }
+    return window.location.protocol + '//' + window.location.host;
+  }
+
+  function parseJson(text) {
+    try {
+      return JSON.parse(text || '{}');
+    } catch (err) {
+      return {};
+    }
+  }
+
+  function request(method, url, body, headers, callback) {
+    var xhr = new XMLHttpRequest();
+    xhr.open(method, url, true);
+    xhr.setRequestHeader('Cache-Control', 'no-store');
+
+    var key;
+    if (headers) {
+      for (key in headers) {
+        if (Object.prototype.hasOwnProperty.call(headers, key)) {
+          xhr.setRequestHeader(key, headers[key]);
+        }
+      }
+    }
+
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState !== 4) {
+        return;
+      }
+      callback(null, xhr);
+    };
+
+    xhr.onerror = function () {
+      callback(new Error('network_error'), xhr);
+    };
+
+    try {
+      xhr.send(body === undefined || body === null ? null : body);
+    } catch (err) {
+      callback(err, xhr);
+    }
+  }
+
+  function postJson(url, body, callback) {
+    request(
+      'POST',
+      url,
+      JSON.stringify(body || {}),
+      {'Content-Type': 'application/json'},
+      callback
+    );
+  }
 
   function candidateWindows() {
-    const windows = [window];
-
-    // The login page can be opened directly, from the HA frontend, or from the
-    // Companion App WebView. Check same-origin parent/top contexts when they are
-    // accessible so an existing HA session is detected in all of those cases.
-    try {
-      if (window.parent && window.parent !== window) windows.push(window.parent);
-    } catch {}
+    var windows = [window];
 
     try {
-      if (window.top && !windows.includes(window.top)) windows.push(window.top);
-    } catch {}
+      if (window.parent && window.parent !== window) {
+        windows.push(window.parent);
+      }
+    } catch (err) {}
+
+    try {
+      if (window.top && window.top !== window && window.top !== window.parent) {
+        windows.push(window.top);
+      }
+    } catch (err) {}
 
     return windows;
   }
 
   function browserTokens() {
-    for (const target of candidateWindows()) {
-      try {
-        const memory = target.__tokenCache?.tokens;
-        if (memory?.access_token) return memory;
-      } catch {}
+    var windows = candidateWindows();
+    var i;
+    var target;
+    var memory;
+    var raw;
+    var stored;
+
+    for (i = 0; i < windows.length; i += 1) {
+      target = windows[i];
 
       try {
-        const raw = target.localStorage?.getItem('hassTokens');
-        if (raw) {
-          const stored = JSON.parse(raw);
-          if (stored?.access_token || stored?.refresh_token) return stored;
+        memory = target.__tokenCache && target.__tokenCache.tokens;
+        if (memory && (memory.access_token || memory.refresh_token)) {
+          return memory;
         }
-      } catch {}
+      } catch (err) {}
+
+      try {
+        raw = target.localStorage
+          ? target.localStorage.getItem('hassTokens')
+          : null;
+        if (raw) {
+          stored = JSON.parse(raw);
+          if (stored && (stored.access_token || stored.refresh_token)) {
+            return stored;
+          }
+        }
+      } catch (err) {}
     }
 
     return null;
   }
 
   function companionBridgeWindow() {
-    for (const target of candidateWindows()) {
+    var windows = candidateWindows();
+    var i;
+    var target;
+
+    for (i = 0; i < windows.length; i += 1) {
+      target = windows[i];
       try {
         if (
           target.externalAppV2
           || target.externalApp
-          || target.webkit?.messageHandlers?.getExternalAuth
+          || (
+            target.webkit
+            && target.webkit.messageHandlers
+            && target.webkit.messageHandlers.getExternalAuth
+          )
         ) {
           return target;
         }
-      } catch {}
+      } catch (err) {}
     }
 
     return null;
   }
 
   function installExternalAuthCallback() {
-    const callback = (success, data) => {
-      if (externalAuthResolve) {
-        externalAuthResolve(Boolean(success), data || null);
+    var windows = candidateWindows();
+    var i;
+
+    function callback(success, data) {
+      if (externalAuthCallback) {
+        externalAuthCallback(Boolean(success), data || null);
+      }
+    }
+
+    for (i = 0; i < windows.length; i += 1) {
+      try {
+        windows[i].externalAuthSetToken = callback;
+      } catch (err) {}
+    }
+  }
+
+  function requestExternalAuth(callback) {
+    var bridge = companionBridgeWindow();
+    var settled = false;
+    var timeout;
+    var payload;
+
+    if (!bridge) {
+      callback(null);
+      return;
+    }
+
+    timeout = setTimeout(function () {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      externalAuthCallback = null;
+      callback(null);
+    }, 5000);
+
+    externalAuthCallback = function (success, data) {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      externalAuthCallback = null;
+
+      if (success && data && data.access_token) {
+        callback({access_token: data.access_token});
+      } else {
+        callback(null);
       }
     };
 
-    for (const target of candidateWindows()) {
-      try {
-        target.externalAuthSetToken = callback;
-      } catch {}
-    }
-  }
+    payload = {callback: 'externalAuthSetToken', force: false};
 
-  function requestExternalAuth(force = false) {
-    const bridge = companionBridgeWindow();
-    if (!bridge) return Promise.resolve(null);
-
-    return new Promise((resolve) => {
-      let settled = false;
-      const timeout = setTimeout(() => {
-        if (!settled) {
-          settled = true;
-          externalAuthResolve = null;
-          resolve(null);
-        }
-      }, 5000);
-
-      externalAuthResolve = (success, data) => {
-        if (settled) return;
-
-        settled = true;
-        clearTimeout(timeout);
-        externalAuthResolve = null;
-
-        resolve(
-          success && data?.access_token
-            ? {access_token: data.access_token}
-            : null
-        );
-      };
-
-      const payload = {callback: 'externalAuthSetToken', force};
-
-      try {
-        if (bridge.externalAppV2) {
-          bridge.externalAppV2.postMessage(JSON.stringify({
-            type: 'getExternalAuth',
-            payload
-          }));
-          return;
-        }
-
-        if (bridge.externalApp) {
-          bridge.externalApp.getExternalAuth(JSON.stringify(payload));
-          return;
-        }
-
-        bridge.webkit.messageHandlers.getExternalAuth.postMessage(payload);
-      } catch {
-        clearTimeout(timeout);
-        externalAuthResolve = null;
-        resolve(null);
+    try {
+      if (bridge.externalAppV2) {
+        bridge.externalAppV2.postMessage(JSON.stringify({
+          type: 'getExternalAuth',
+          payload: payload
+        }));
+        return;
       }
-    });
-  }
 
-  async function tokenIsValid(accessToken) {
-    if (!accessToken) return false;
+      if (bridge.externalApp) {
+        bridge.externalApp.getExternalAuth(JSON.stringify(payload));
+        return;
+      }
 
-    try {
-      const response = await fetch('/api/', {
-        headers: {Authorization: `Bearer ${accessToken}`},
-        cache: 'no-store'
-      });
-      return response.ok;
-    } catch {
-      return false;
+      bridge.webkit.messageHandlers.getExternalAuth.postMessage(payload);
+    } catch (err) {
+      clearTimeout(timeout);
+      externalAuthCallback = null;
+      callback(null);
     }
   }
 
-  async function refreshBrowserToken(tokens) {
-    if (!tokens?.refresh_token) return null;
-
-    const clientId = tokens.clientId || clientIdDefault;
-    const body = new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: tokens.refresh_token,
-      client_id: clientId
-    });
-
-    try {
-      const response = await fetch('/auth/token', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: body.toString(),
-        cache: 'no-store'
-      });
-
-      if (!response.ok) return null;
-
-      const data = await response.json();
-      if (!data.access_token) return null;
-
-      // Keep HA frontend storage current if the token was refreshed here.
-      const expiresIn = data.expires_in || 1800;
-      const updated = {
-        ...tokens,
-        hassUrl: location.origin,
-        clientId,
-        access_token: data.access_token,
-        refresh_token: data.refresh_token || tokens.refresh_token,
-        expires_in: expiresIn,
-        expires: Date.now() + expiresIn * 1000
-      };
-
-      try {
-        localStorage.setItem('hassTokens', JSON.stringify(updated));
-      } catch {}
-
-      return updated;
-    } catch {
-      return null;
+  function tokenIsValid(accessToken, callback) {
+    if (!accessToken) {
+      callback(false);
+      return;
     }
+
+    request(
+      'GET',
+      '/api/',
+      null,
+      {'Authorization': 'Bearer ' + accessToken},
+      function (err, xhr) {
+        callback(!err && xhr && xhr.status >= 200 && xhr.status < 300);
+      }
+    );
   }
 
-  async function alreadyAuthenticated() {
+  function refreshBrowserToken(tokens, callback) {
+    var clientId;
+    var body;
+
+    if (!tokens || !tokens.refresh_token) {
+      callback(null);
+      return;
+    }
+
+    clientId = tokens.clientId || (currentOrigin() + '/');
+    body =
+      'grant_type=refresh_token'
+      + '&refresh_token=' + encodeURIComponent(tokens.refresh_token)
+      + '&client_id=' + encodeURIComponent(clientId);
+
+    request(
+      'POST',
+      '/auth/token',
+      body,
+      {'Content-Type': 'application/x-www-form-urlencoded'},
+      function (err, xhr) {
+        var data;
+        var expiresIn;
+        var updated = {};
+        var key;
+
+        if (
+          err
+          || !xhr
+          || xhr.status < 200
+          || xhr.status >= 300
+        ) {
+          callback(null);
+          return;
+        }
+
+        data = parseJson(xhr.responseText);
+        if (!data.access_token) {
+          callback(null);
+          return;
+        }
+
+        for (key in tokens) {
+          if (Object.prototype.hasOwnProperty.call(tokens, key)) {
+            updated[key] = tokens[key];
+          }
+        }
+
+        expiresIn = data.expires_in || 1800;
+        updated.hassUrl = currentOrigin();
+        updated.clientId = clientId;
+        updated.access_token = data.access_token;
+        updated.refresh_token = data.refresh_token || tokens.refresh_token;
+        updated.expires_in = expiresIn;
+        updated.expires = Date.now() + expiresIn * 1000;
+
+        try {
+          localStorage.setItem('hassTokens', JSON.stringify(updated));
+        } catch (storageErr) {}
+
+        callback(updated);
+      }
+    );
+  }
+
+  function alreadyAuthenticated(callback) {
+    var stored = browserTokens();
+
     installExternalAuthCallback();
 
-    // Browser/frontend authentication: verify the access token instead of
-    // redirecting merely because stale localStorage happens to exist.
-    const stored = browserTokens();
-    if (stored?.access_token && await tokenIsValid(stored.access_token)) {
-      return true;
+    if (stored && stored.access_token) {
+      tokenIsValid(stored.access_token, function (valid) {
+        if (valid) {
+          callback(true);
+          return;
+        }
+        checkRefresh();
+      });
+      return;
     }
 
-    if (stored?.refresh_token) {
-      const refreshed = await refreshBrowserToken(stored);
-      if (
-        refreshed?.access_token
-        && await tokenIsValid(refreshed.access_token)
-      ) {
-        return true;
+    checkRefresh();
+
+    function checkRefresh() {
+      if (stored && stored.refresh_token) {
+        refreshBrowserToken(stored, function (refreshed) {
+          if (refreshed && refreshed.access_token) {
+            tokenIsValid(refreshed.access_token, function (valid) {
+              if (valid) {
+                callback(true);
+                return;
+              }
+              checkCompanion();
+            });
+            return;
+          }
+          checkCompanion();
+        });
+        return;
       }
+
+      checkCompanion();
     }
 
-    // Companion App authentication: request only a temporary access token.
-    // The app's refresh token is never exposed to this page.
-    const appTokens = await requestExternalAuth(false);
-    if (
-      appTokens?.access_token
-      && await tokenIsValid(appTokens.access_token)
-    ) {
-      return true;
-    }
+    function checkCompanion() {
+      requestExternalAuth(function (tokens) {
+        if (!tokens || !tokens.access_token) {
+          callback(false);
+          return;
+        }
 
-    return false;
+        tokenIsValid(tokens.access_token, function (valid) {
+          callback(Boolean(valid));
+        });
+      });
+    }
   }
 
   function redirectToHome() {
     clearInterval(qrTimer);
     clearInterval(pollTimer);
-
     state.className = 'ok';
-    state.textContent = 'Already signed in. Opening Home Assistant…';
-
-    // replace() keeps the QR entry page out of browser history, so Back does
-    // not immediately return the user to the login flow.
+    state.textContent = 'Already signed in. Opening Home Assistant...';
     window.location.replace('/');
   }
 
@@ -249,7 +372,21 @@
     clearInterval(pollTimer);
   }
 
+  function arrayContains(values, value) {
+    var i;
+    for (i = 0; i < values.length; i += 1) {
+      if (values[i] === value) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   function requestError(data, fallback) {
+    if (!data) {
+      return fallback;
+    }
+
     if (data.error === 'disabled') {
       return 'QR Login is disabled.';
     }
@@ -266,125 +403,168 @@
       if (data.reason === 'nabu_client_ip_unavailable') {
         return 'Country restriction is enabled, but Nabu Casa did not provide a usable public client IP.';
       }
-      if (
-        [
-          'database_unavailable',
-          'lookup_failed',
-          'client_ip_missing',
-          'client_ip_invalid'
-        ].includes(data.reason)
-      ) {
+
+      if (arrayContains([
+        'database_unavailable',
+        'lookup_failed',
+        'client_ip_missing',
+        'client_ip_invalid'
+      ], data.reason)) {
         return 'Country restriction is enabled, but local GeoIP resolution is unavailable.';
       }
-      return `QR Login is not allowed from country ${data.country || 'unknown'}.`;
+
+      return 'QR Login is not allowed from country '
+        + (data.country || 'unknown')
+        + '.';
     }
+
     return fallback;
   }
 
-  async function rotateQr() {
-    const response = await post('/api/secure_qr_login/qr', {
-      session_id: sessionId,
-      device_secret: deviceSecret
-    });
+  function animateProgress() {
+    progress.style.transition = 'none';
+    progress.style.transform = 'scaleX(1)';
 
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      fail(requestError(data, 'Unable to refresh QR code.'));
-      return;
-    }
+    // Force style application before starting the transition. This avoids the
+    // Web Animations API, which is missing on some Samsung/Tizen WebViews.
+    void progress.offsetWidth;
 
-    const blob = await response.blob();
-    const old = qrBox.querySelector('img');
-    if (old && old.dataset.url) {
-      URL.revokeObjectURL(old.dataset.url);
-    }
-
-    const url = URL.createObjectURL(blob);
-    const img = document.createElement('img');
-    img.src = url;
-    img.dataset.url = url;
-    img.alt = 'Secure QR Login code';
-    qrBox.replaceChildren(img);
-
-    progress.animate(
-      [{transform: 'scaleX(1)'}, {transform: 'scaleX(0)'}],
-      {duration: qrLifetime * 1000, fill: 'forwards'}
-    );
+    progress.style.transition =
+      'transform ' + qrLifetime + 's linear';
+    progress.style.transform = 'scaleX(0)';
   }
 
-  async function poll() {
-    const response = await post('/api/secure_qr_login/status', {
+  function rotateQr() {
+    postJson('/api/secure_qr_login/qr', {
       session_id: sessionId,
       device_secret: deviceSecret
-    });
-    const data = await response.json().catch(() => ({}));
+    }, function (err, xhr) {
+      var data;
 
-    if (!response.ok) {
       if (
-        ['disabled', 'session_not_found', 'session_locked'].includes(data.error)
+        err
+        || !xhr
+        || xhr.status < 200
+        || xhr.status >= 300
       ) {
-        fail(requestError(data, 'Login window closed or expired.'));
+        data = xhr ? parseJson(xhr.responseText) : {};
+        fail(requestError(data, 'Unable to refresh QR code.'));
+        return;
       }
-      return;
-    }
 
-    if (data.status === 'denied') {
-      fail('Login denied.');
-      return;
-    }
-    if (data.status !== 'approved') {
-      return;
-    }
-
-    clearInterval(qrTimer);
-    clearInterval(pollTimer);
-
-    const expiresIn = data.token_expires_in || 1800;
-    localStorage.setItem('hassTokens', JSON.stringify({
-      hassUrl: window.location.origin,
-      clientId: window.location.origin + '/',
-      access_token: data.access_token,
-      refresh_token: data.refresh_token,
-      expires_in: expiresIn,
-      expires: Date.now() + expiresIn * 1000
-    }));
-
-    state.className = 'ok';
-    state.textContent = 'Approved. Opening Home Assistant…';
-    setTimeout(() => {
-      window.location.replace('/');
-    }, 500);
+      // The SVG is generated by this integration using Segno and contains no
+      // user-controlled markup. Injecting it directly avoids Blob URLs and
+      // Response.blob(), both problematic on older TV browser engines.
+      qrBox.innerHTML = xhr.responseText;
+      animateProgress();
+    });
   }
 
-  async function init() {
-    state.textContent = 'Checking existing Home Assistant session…';
+  function poll() {
+    postJson('/api/secure_qr_login/status', {
+      session_id: sessionId,
+      device_secret: deviceSecret
+    }, function (err, xhr) {
+      var data;
+      var expiresIn;
+      var tokenState;
 
-    if (await alreadyAuthenticated()) {
-      redirectToHome();
-      return;
-    }
+      if (err || !xhr) {
+        return;
+      }
 
-    const response = await post('/api/secure_qr_login/start', {});
-    const data = await response.json().catch(() => ({}));
+      data = parseJson(xhr.responseText);
 
-    if (!response.ok) {
-      fail(
-        requestError(
-          data,
-          'Unable to start login session.'
-        )
-      );
-      return;
-    }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        if (arrayContains(
+          ['disabled', 'session_not_found', 'session_locked'],
+          data.error
+        )) {
+          fail(requestError(data, 'Login window closed or expired.'));
+        }
+        return;
+      }
 
-    sessionId = data.session_id;
-    deviceSecret = data.device_secret;
-    qrLifetime = data.qr_lifetime || 10;
+      if (data.status === 'denied') {
+        fail('Login denied.');
+        return;
+      }
+      if (data.status !== 'approved') {
+        return;
+      }
 
-    await rotateQr();
-    qrTimer = setInterval(rotateQr, qrLifetime * 1000);
-    pollTimer = setInterval(poll, 2000);
+      clearInterval(qrTimer);
+      clearInterval(pollTimer);
+
+      expiresIn = data.token_expires_in || 1800;
+      tokenState = {
+        hassUrl: currentOrigin(),
+        clientId: currentOrigin() + '/',
+        access_token: data.access_token,
+        refresh_token: data.refresh_token,
+        expires_in: expiresIn,
+        expires: Date.now() + expiresIn * 1000
+      };
+
+      try {
+        localStorage.setItem('hassTokens', JSON.stringify(tokenState));
+      } catch (storageErr) {
+        fail('Login approved, but this device cannot store the Home Assistant session.');
+        return;
+      }
+
+      state.className = 'ok';
+      state.textContent = 'Approved. Opening Home Assistant...';
+      setTimeout(function () {
+        window.location.replace('/');
+      }, 500);
+    });
   }
 
-  init().catch(() => fail('Unable to start Secure QR Login.'));
-})();
+  function beginLogin() {
+    state.textContent = 'Starting secure login session...';
+
+    postJson('/api/secure_qr_login/start', {}, function (err, xhr) {
+      var data;
+
+      if (
+        err
+        || !xhr
+        || xhr.status < 200
+        || xhr.status >= 300
+      ) {
+        data = xhr ? parseJson(xhr.responseText) : {};
+        fail(requestError(data, 'Unable to start login session.'));
+        return;
+      }
+
+      data = parseJson(xhr.responseText);
+      sessionId = data.session_id || '';
+      deviceSecret = data.device_secret || '';
+      qrLifetime = data.qr_lifetime || 10;
+
+      if (!sessionId || !deviceSecret) {
+        fail('Invalid response while starting Secure QR Login.');
+        return;
+      }
+
+      rotateQr();
+      qrTimer = setInterval(rotateQr, qrLifetime * 1000);
+      pollTimer = setInterval(poll, 2000);
+    });
+  }
+
+  function init() {
+    state.textContent = 'Checking existing Home Assistant session...';
+
+    alreadyAuthenticated(function (authenticated) {
+      if (authenticated) {
+        redirectToHome();
+        return;
+      }
+      beginLogin();
+    });
+  }
+
+  init();
+}());
