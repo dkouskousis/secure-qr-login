@@ -39,7 +39,7 @@ The QR token can approve or deny a request, but it cannot retrieve credentials. 
 
 ## Companion App
 
-The approval page and the QR Login admin panel support the Home Assistant Companion App:
+The approval page supports the Home Assistant Companion App:
 
 - `homeassistant://navigate/...` deep-link handoff.
 - Android `externalAppV2` bridge.
@@ -47,8 +47,9 @@ The approval page and the QR Login admin panel support the Home Assistant Compan
 - iOS `webkit.messageHandlers.getExternalAuth`.
 - The integration requests only a temporary access token from the app through the official external-auth bridge.
 - The Companion App refresh token is never exposed to or stored by Secure QR Login.
-- The admin panel also checks Home Assistant's in-memory token cache before falling back to browser token storage.
 - Browser OAuth remains available as a fallback for approval.
+
+The **QR Login sidebar itself is a native Home Assistant custom panel**, not an iframe. It receives Home Assistant's authenticated `hass` frontend object and uses `hass.callApi()` for admin operations. This avoids the Android Companion App's intentional restriction that rejects external-auth bridge requests originating from iframes.
 
 ## User allowlist
 
