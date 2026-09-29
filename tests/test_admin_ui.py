@@ -66,3 +66,22 @@ def test_admin_css_contains_mobile_and_tab_layouts() -> None:
     assert ".tab-panel" in css
     assert ".sticky-save" in css
     assert "@media(max-width:680px)" in css
+
+
+def test_qr_entry_redirects_existing_authenticated_session() -> None:
+    """QR entry verifies an existing HA session before starting a new flow."""
+    js = (
+        ROOT
+        / "custom_components/secure_qr_login/www/static/start.js"
+    ).read_text(encoding="utf-8")
+
+    assert "alreadyAuthenticated" in js
+    assert "tokenIsValid" in js
+    assert "refreshBrowserToken" in js
+    assert "requestExternalAuth" in js
+    assert "window.location.replace('/')" in js
+
+    # The authentication check must happen before creating a QR session.
+    assert js.index("await alreadyAuthenticated()") < js.index(
+        "post('/api/secure_qr_login/start'"
+    )
