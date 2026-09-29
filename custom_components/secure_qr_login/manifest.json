@@ -7,7 +7,8 @@
   "issue_tracker": "https://github.com/dkouskousis/secure-qr-login/issues",
   "dependencies": [
     "http",
-    "frontend"
+    "frontend",
+    "panel_custom"
   ],
   "codeowners": [
     "@dkouskousis"
