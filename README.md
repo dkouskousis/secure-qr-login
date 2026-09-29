@@ -264,8 +264,12 @@ Country data is provided by **DB-IP Country Lite** and stored locally under Home
 
 ## Version
 
-Current integration version: **1.6.3**
+Current integration version: **1.6.4**
 
 ## License
 
 MIT
+
+
+### v1.6.4 panel styling
+The native QR Login panel now renders inside Shadow DOM so Home Assistant theme/global CSS cannot override its buttons, inputs, tabs or color palette.
