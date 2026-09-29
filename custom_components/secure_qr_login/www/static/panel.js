@@ -3,7 +3,8 @@ class SecureQrLoginPanel extends HTMLElement {
     super();
     this._hass = null;
     this._rendered = false;
-    this._timer = null;
+    this._countdownTimer = null;
+    this._refreshTimer = null;
     this._enabled = false;
     this._remaining = 0;
     this._syncedAt = performance.now();
@@ -24,8 +25,10 @@ class SecureQrLoginPanel extends HTMLElement {
   }
 
   disconnectedCallback() {
-    if (this._timer) clearInterval(this._timer);
-    this._timer = null;
+    if (this._countdownTimer) clearInterval(this._countdownTimer);
+    if (this._refreshTimer) clearInterval(this._refreshTimer);
+    this._countdownTimer = null;
+    this._refreshTimer = null;
   }
 
   _q(id) {
@@ -163,9 +166,11 @@ class SecureQrLoginPanel extends HTMLElement {
     this._q('revokeAll').addEventListener('click', () => this._revokeAll());
     this._q('clearHistory').addEventListener('click', () => this._clearHistory());
 
-    if (!this._timer) {
-      this._timer = setInterval(() => this._renderCountdown(), 250);
-      setInterval(() => this._refreshState(), 5000);
+    if (!this._countdownTimer) {
+      this._countdownTimer = setInterval(() => this._renderCountdown(), 250);
+    }
+    if (!this._refreshTimer) {
+      this._refreshTimer = setInterval(() => this._refreshState(), 5000);
     }
   }
 
