@@ -26,6 +26,10 @@ class SecureQrLoginPanel extends HTMLElement {
 
   connectedCallback() {
     if (!this._rendered) this._render();
+    this._startTimers();
+    if (this._hass && this._initialized) {
+      this._refreshAll();
+    }
   }
 
   disconnectedCallback() {
@@ -170,6 +174,10 @@ class SecureQrLoginPanel extends HTMLElement {
     this._q('revokeAll').addEventListener('click', () => this._revokeAll());
     this._q('clearHistory').addEventListener('click', () => this._clearHistory());
 
+    this._startTimers();
+  }
+
+  _startTimers() {
     if (!this._countdownTimer) {
       this._countdownTimer = setInterval(() => this._renderCountdown(), 250);
     }
