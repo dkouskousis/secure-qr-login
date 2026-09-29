@@ -149,3 +149,6 @@ code{background:var(--panel-3);border-radius:5px;padding:2px 5px}
   tbody td{border:0;padding:8px 0;display:flex;justify-content:space-between;gap:16px}
   tbody td:before{content:attr(data-label);color:var(--muted);font-weight:700}
 }
+
+.secure-qr-panel{min-height:100%;padding:28px;color:var(--text);background:radial-gradient(circle at top right,rgba(45,155,240,.10),transparent 28rem),var(--bg)}
+@media(max-width:680px){.secure-qr-panel{padding:16px 12px 28px}}
