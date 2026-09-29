@@ -1,6 +1,7 @@
 class SecureQrLoginPanel extends HTMLElement {
   constructor() {
     super();
+    this._root = this.attachShadow({mode: 'open'});
     this._hass = null;
     this._rendered = false;
     this._countdownTimer = null;
@@ -40,7 +41,7 @@ class SecureQrLoginPanel extends HTMLElement {
   }
 
   _q(id) {
-    return this.querySelector('#' + id);
+    return this._root.querySelector('#' + id);
   }
 
   async _api(method, path, data) {
@@ -50,8 +51,8 @@ class SecureQrLoginPanel extends HTMLElement {
 
   _render() {
     this._rendered = true;
-    this.innerHTML = `
-      <link rel="stylesheet" href="/secure_qr_login/static/app.css?v=1.6.3">
+    this._root.innerHTML = `
+      <link rel="stylesheet" href="/secure_qr_login/static/app.css?v=1.6.4">
       <div class="secure-qr-panel">
         <div class="admin-shell">
           <header class="admin-header">
@@ -164,7 +165,7 @@ class SecureQrLoginPanel extends HTMLElement {
       </div>
     `;
 
-    this.querySelectorAll('.tab-button').forEach((button) => {
+    this._root.querySelectorAll('.tab-button').forEach((button) => {
       button.addEventListener('click', () => this._selectTab(button.dataset.tab));
     });
     this._q('enable').addEventListener('click', () => this._setEnabled(true));
@@ -187,10 +188,10 @@ class SecureQrLoginPanel extends HTMLElement {
   }
 
   _selectTab(name) {
-    this.querySelectorAll('.tab-button').forEach((button) => {
+    this._root.querySelectorAll('.tab-button').forEach((button) => {
       button.classList.toggle('active', button.dataset.tab === name);
     });
-    this.querySelectorAll('.tab-panel').forEach((panel) => {
+    this._root.querySelectorAll('.tab-panel').forEach((panel) => {
       panel.classList.toggle('active', panel.dataset.panel === name);
     });
   }
