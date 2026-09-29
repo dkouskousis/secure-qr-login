@@ -264,7 +264,7 @@ Country data is provided by **DB-IP Country Lite** and stored locally under Home
 
 ## Version
 
-Current integration version: **1.6.4**
+Current integration version: **1.6.5**
 
 ## License
 
@@ -273,3 +273,7 @@ MIT
 
 ### v1.6.4 panel styling
 The native QR Login panel now renders inside Shadow DOM so Home Assistant theme/global CSS cannot override its buttons, inputs, tabs or color palette.
+
+
+### v1.6.5 TV compatibility
+The unauthenticated QR login screen now uses legacy-compatible ES5-style JavaScript and XMLHttpRequest instead of modern fetch/async APIs. This improves compatibility with older Samsung/Tizen browser engines used by TV apps.
