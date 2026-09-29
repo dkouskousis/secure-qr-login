@@ -508,3 +508,60 @@ async def test_geoip_backend_exception_returns_json_error(
 
     assert response.status == 500
     assert (await response.json())["error"] == "geoip_update_internal_error"
+
+
+async def test_authenticated_admin_post_without_origin_is_allowed(
+    hass_client,
+    qr_manager,
+    monkeypatch,
+) -> None:
+    """Companion App bearer-authenticated admin POSTs may omit Origin."""
+    client = await hass_client()
+    captured = {}
+
+    async def fake_update_settings(options):
+        captured.update(options)
+
+    monkeypatch.setattr(qr_manager, "async_update_settings", fake_update_settings)
+
+    response = await client.post(
+        "/api/secure_qr_login/admin/settings",
+        json={
+            "enable_window_seconds": 180,
+            "qr_lifetime_seconds": 10,
+            "max_pending_sessions": 3,
+            "history_limit": 100,
+            "allowed_user_ids": [],
+            "notify_services": [],
+            "notify_on_approved": True,
+            "notify_on_denied": True,
+            "allowed_countries": [],
+            "allow_private_networks": False,
+        },
+    )
+
+    assert response.status == 200
+    assert captured["enable_window_seconds"] == 180
+
+
+async def test_authenticated_admin_window_without_origin_is_allowed(
+    hass_client,
+    qr_manager,
+    monkeypatch,
+) -> None:
+    """QR enable/disable works from an authenticated Companion App WebView."""
+    client = await hass_client()
+
+    async def fake_enable():
+        qr_manager.enabled_until = time.time() + 180
+
+    monkeypatch.setattr(qr_manager, "async_enable", fake_enable)
+
+    response = await client.post(
+        "/api/secure_qr_login/admin/window",
+        json={"enabled": True},
+    )
+
+    assert response.status == 200
+    payload = await response.json()
+    assert payload["enabled"] is True
