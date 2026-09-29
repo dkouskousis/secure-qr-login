@@ -5,6 +5,7 @@ class SecureQrLoginPanel extends HTMLElement {
     this._rendered = false;
     this._countdownTimer = null;
     this._refreshTimer = null;
+    this._initialized = false;
     this._enabled = false;
     this._remaining = 0;
     this._syncedAt = performance.now();
@@ -13,7 +14,10 @@ class SecureQrLoginPanel extends HTMLElement {
   set hass(value) {
     this._hass = value;
     if (!this._rendered) this._render();
-    this._refreshAll();
+    if (!this._initialized) {
+      this._initialized = true;
+      this._refreshAll();
+    }
   }
 
   set narrow(_value) {}
@@ -43,7 +47,7 @@ class SecureQrLoginPanel extends HTMLElement {
   _render() {
     this._rendered = true;
     this.innerHTML = `
-      <link rel="stylesheet" href="/secure_qr_login/static/app.css?v=1.5.4">
+      <link rel="stylesheet" href="/secure_qr_login/static/app.css?v=1.6.3">
       <div class="secure-qr-panel">
         <div class="admin-shell">
           <header class="admin-header">
