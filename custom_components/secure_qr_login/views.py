@@ -9,7 +9,7 @@ Security model
 * QR bearer tokens rotate frequently and can approve/deny only.
 * Credential retrieval is single-use and requires the device secret.
 * Repeated invalid device-secret attempts destroy the target session.
-* Optional country restriction is an additional Cloudflare-backed policy layer.
+* Optional country restriction is an additional local GeoIP policy layer.
 * Issued refresh tokens are persisted only by their non-secret internal id so
   administrators can revoke them later and orphaned tokens can be cleaned up.
 """
