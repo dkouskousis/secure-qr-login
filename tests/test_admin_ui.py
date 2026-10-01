@@ -90,7 +90,7 @@ def test_qr_entry_redirects_existing_authenticated_session() -> None:
     init_end = js.index("\n  init();", init_start)
     init_block = js[init_start:init_end]
 
-    assert "alreadyAuthenticated(function (authenticated)" in init_block
+    assert "alreadyAuthenticated(function (authenticated, accessToken)" in init_block
     assert "if (authenticated)" in init_block
     assert init_block.index(
         "alreadyAuthenticated(function (authenticated)"
