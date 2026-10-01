@@ -52,7 +52,7 @@ class SecureQrLoginPanel extends HTMLElement {
   _render() {
     this._rendered = true;
     this._root.innerHTML = `
-      <link rel="stylesheet" href="/secure_qr_login/static/app.css?v=1.6.4">
+      <link rel="stylesheet" href="/secure_qr_login/static/app.css?v=1.6.6">
       <div class="secure-qr-panel">
         <div class="admin-shell">
           <header class="admin-header">
