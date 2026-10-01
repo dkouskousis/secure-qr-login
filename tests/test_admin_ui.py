@@ -79,7 +79,9 @@ def test_qr_entry_redirects_existing_authenticated_session() -> None:
     assert "tokenIsValid" in js
     assert "refreshBrowserToken" in js
     assert "requestExternalAuth" in js
-    assert "window.location.replace('/')" in js
+    assert "redirectToDestination" in js
+    assert "/api/secure_qr_login/destination" in js
+    assert "safeRedirectPath" in js
 
     # The authentication check must happen before beginLogin() is called.
     # Keep this syntax-agnostic because start.js intentionally uses legacy
