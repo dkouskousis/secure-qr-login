@@ -264,7 +264,7 @@ Country data is provided by **DB-IP Country Lite** and stored locally under Home
 
 ## Version
 
-Current integration version: **1.6.5**
+Current integration version: **1.6.6**
 
 ## License
 
@@ -277,3 +277,7 @@ The native QR Login panel now renders inside Shadow DOM so Home Assistant theme/
 
 ### v1.6.5 TV compatibility
 The unauthenticated QR login screen now uses legacy-compatible ES5-style JavaScript and XMLHttpRequest instead of modern fetch/async APIs. This improves compatibility with older Samsung/Tizen browser engines used by TV apps.
+
+
+### v1.6.6 per-user destinations
+Admins can configure an optional internal Home Assistant destination for each active user. After a new QR login, or when an already-authenticated device opens the QR entry page again, Secure QR Login resolves the signed-in user's configured path and navigates there. Destinations are restricted to same-origin internal paths; external URLs, protocol-relative URLs, backslashes and redirects back into the QR authentication pages are rejected.
