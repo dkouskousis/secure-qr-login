@@ -39,6 +39,7 @@ from .const import (
     CONF_NOTIFY_ON_DENIED,
     CONF_NOTIFY_SERVICES,
     CONF_QR_LIFETIME_SECONDS,
+    CONF_USER_REDIRECT_PATHS,
     DEFAULT_ALLOWED_COUNTRIES,
     DEFAULT_ALLOWED_USER_IDS,
     DEFAULT_ALLOW_PRIVATE_NETWORKS,
@@ -234,6 +235,39 @@ def _validate_string_list(value, *, maximum: int = 256) -> list[str] | None:
     return list(dict.fromkeys(value))
 
 
+def _valid_internal_redirect_path(value: str) -> bool:
+    """Return whether a redirect stays strictly inside this HA origin."""
+    if not value or len(value) > 512:
+        return False
+    if not value.startswith("/") or value.startswith("//"):
+        return False
+    if "\\" in value:
+        return False
+    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        return False
+    return True
+
+
+def _validate_redirect_paths(value) -> dict[str, str] | None:
+    """Validate the admin-supplied user-id -> internal-path mapping."""
+    if not isinstance(value, dict) or len(value) > 128:
+        return None
+
+    result: dict[str, str] = {}
+    for user_id, path in value.items():
+        if not isinstance(user_id, str) or not isinstance(path, str):
+            return None
+
+        clean_path = path.strip()
+        if not clean_path:
+            continue
+        if not _valid_internal_redirect_path(clean_path):
+            return None
+        result[user_id] = clean_path
+
+    return result
+
+
 class StartView(HomeAssistantView):
     url = "/api/secure_qr_login/start"
     name = "api:secure_qr_login:start"
@@ -426,11 +460,33 @@ class StatusView(HomeAssistantView):
             "access_token": session.access_token,
             "refresh_token": session.refresh_token.token,
             "token_expires_in": session.token_expires_in,
+            "redirect_path": manager.redirect_path_for_user(
+                session.approved_user_id
+            ),
         }
         manager.sessions.pop(session_id, None)
         session.access_token = None
         session.refresh_token = None
         return _json(self, response)
+
+
+class UserDestinationView(HomeAssistantView):
+    """Return the configured internal destination for the signed-in HA user."""
+
+    url = "/api/secure_qr_login/destination"
+    name = "api:secure_qr_login:destination"
+    requires_auth = True
+
+    async def get(self, request: web.Request) -> web.Response:
+        manager = _manager(request)
+        if manager is None:
+            return _json(self, {"error": "not_ready"}, 503)
+
+        user = request["hass_user"]
+        return _json(
+            self,
+            {"redirect_path": manager.redirect_path_for_user(user.id)},
+        )
 
 
 class ApprovalDetailsView(HomeAssistantView):
@@ -633,6 +689,7 @@ class AdminSettingsView(HomeAssistantView):
                     CONF_NOTIFY_ON_DENIED: manager.notify_on_denied,
                     CONF_ALLOWED_COUNTRIES: sorted(manager.allowed_countries),
                     CONF_ALLOW_PRIVATE_NETWORKS: manager.allow_private_networks,
+                    CONF_USER_REDIRECT_PATHS: manager.user_redirect_paths,
                 },
                 "users": user_options,
                 "notify_services": notify_options,
@@ -708,6 +765,9 @@ class AdminSettingsView(HomeAssistantView):
             payload.get(CONF_ALLOWED_COUNTRIES),
             maximum=249,
         )
+        redirect_paths = _validate_redirect_paths(
+            payload.get(CONF_USER_REDIRECT_PATHS, {})
+        )
 
         notify_approved = payload.get(CONF_NOTIFY_ON_APPROVED)
         notify_denied = payload.get(CONF_NOTIFY_ON_DENIED)
@@ -721,6 +781,7 @@ class AdminSettingsView(HomeAssistantView):
             allowed_users,
             notify_services,
             countries,
+            redirect_paths,
         ):
             return _json(self, {"error": "invalid_settings"}, 400)
 
@@ -737,6 +798,8 @@ class AdminSettingsView(HomeAssistantView):
         }
         if not set(allowed_users).issubset(available_users):
             return _json(self, {"error": "invalid_user"}, 400)
+        if not set(redirect_paths).issubset(available_users):
+            return _json(self, {"error": "invalid_redirect_user"}, 400)
 
         available_notify = set(
             request.app["hass"].services.async_services().get("notify", {})
@@ -765,6 +828,7 @@ class AdminSettingsView(HomeAssistantView):
                 CONF_NOTIFY_ON_DENIED: notify_denied,
                 CONF_ALLOWED_COUNTRIES: normalized_countries,
                 CONF_ALLOW_PRIVATE_NETWORKS: allow_private,
+                CONF_USER_REDIRECT_PATHS: redirect_paths,
             }
         )
 
@@ -1015,6 +1079,7 @@ def register_views(hass: HomeAssistant) -> None:
         StartView(),
         QrView(),
         StatusView(),
+        UserDestinationView(),
         ApprovalDetailsView(),
         ApprovalActionView(),
         AdminStateView(),
