@@ -22,6 +22,7 @@ from .const import (
     CONF_NOTIFY_ON_DENIED,
     CONF_NOTIFY_SERVICES,
     CONF_QR_LIFETIME_SECONDS,
+    CONF_USER_REDIRECT_PATHS,
     DEFAULT_ALLOWED_COUNTRIES,
     DEFAULT_ALLOWED_USER_IDS,
     DEFAULT_ALLOW_PRIVATE_NETWORKS,
@@ -32,6 +33,7 @@ from .const import (
     DEFAULT_NOTIFY_ON_DENIED,
     DEFAULT_NOTIFY_SERVICES,
     DEFAULT_QR_LIFETIME_SECONDS,
+    DEFAULT_USER_REDIRECT_PATHS,
     MAX_DEVICE_SECRET_FAILURES,
     MAX_ENABLE_WINDOW_SECONDS,
     MAX_HISTORY_LIMIT,
@@ -205,6 +207,29 @@ class SecureQrLoginManager:
                 DEFAULT_ALLOW_PRIVATE_NETWORKS,
             )
         )
+
+    @property
+    def user_redirect_paths(self) -> dict[str, str]:
+        """Return validated per-user internal post-login destinations."""
+        raw = self.entry.options.get(
+            CONF_USER_REDIRECT_PATHS,
+            DEFAULT_USER_REDIRECT_PATHS,
+        )
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            str(user_id): str(path)
+            for user_id, path in raw.items()
+            if isinstance(user_id, str)
+            and isinstance(path, str)
+            and path
+        }
+
+    def redirect_path_for_user(self, user_id: str | None) -> str:
+        """Return the configured internal destination for a user, or home."""
+        if not user_id:
+            return "/"
+        return self.user_redirect_paths.get(user_id, "/")
 
     @property
     def enabled(self) -> bool:
