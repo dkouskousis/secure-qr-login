@@ -93,7 +93,7 @@ def test_qr_entry_redirects_existing_authenticated_session() -> None:
     assert "alreadyAuthenticated(function (authenticated, accessToken)" in init_block
     assert "if (authenticated)" in init_block
     assert init_block.index(
-        "alreadyAuthenticated(function (authenticated)"
+        "alreadyAuthenticated(function (authenticated, accessToken)"
     ) < init_block.index("beginLogin();")
 
     # beginLogin() is the only place that creates the new QR session.
