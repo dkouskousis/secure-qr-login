@@ -119,6 +119,7 @@ async def test_full_login_flow_is_single_use(
     assert credentials["status"] == "approved"
     assert credentials["access_token"] == "access-secret"
     assert credentials["refresh_token"] == "refresh-secret"
+    assert credentials["redirect_path"] == "/"
 
     response = await client.post(
         "/api/secure_qr_login/status",
@@ -565,3 +566,123 @@ async def test_authenticated_admin_window_without_origin_is_allowed(
     assert response.status == 200
     payload = await response.json()
     assert payload["enabled"] is True
+
+
+async def test_status_returns_configured_redirect_for_approved_user(
+    hass,
+    hass_client,
+    qr_manager,
+    monkeypatch,
+) -> None:
+    """Credential delivery includes the approved user's internal destination."""
+    users = await hass.auth.async_get_users()
+    human = next(user for user in users if user.is_active and not user.system_generated)
+    qr_manager.entry.options = {
+        "user_redirect_paths": {human.id: "/tv-dashboard"}
+    }
+
+    client = await hass_client()
+    _started, credentials = await _approved_login(client, qr_manager, monkeypatch)
+
+    assert credentials["redirect_path"] == "/tv-dashboard"
+
+
+async def test_destination_endpoint_uses_current_authenticated_user(
+    hass,
+    hass_client,
+    qr_manager,
+) -> None:
+    """Already-authenticated devices can resolve their destination on launch."""
+    users = await hass.auth.async_get_users()
+    human = next(user for user in users if user.is_active and not user.system_generated)
+    qr_manager.entry.options = {
+        "user_redirect_paths": {human.id: "/tv-dashboard"}
+    }
+
+    client = await hass_client()
+    response = await client.get("/api/secure_qr_login/destination")
+
+    assert response.status == 200
+    assert (await response.json())["redirect_path"] == "/tv-dashboard"
+
+
+async def test_admin_settings_accepts_internal_user_redirect(
+    hass,
+    hass_client,
+    qr_manager,
+    monkeypatch,
+) -> None:
+    """Admin may save a destination only for an existing HA user."""
+    users = await hass.auth.async_get_users()
+    human = next(user for user in users if user.is_active and not user.system_generated)
+    client = await hass_client()
+    captured = {}
+
+    async def fake_update_settings(options):
+        captured.update(options)
+
+    monkeypatch.setattr(qr_manager, "async_update_settings", fake_update_settings)
+
+    response = await client.post(
+        "/api/secure_qr_login/admin/settings",
+        json={
+            "enable_window_seconds": 180,
+            "qr_lifetime_seconds": 10,
+            "max_pending_sessions": 3,
+            "history_limit": 100,
+            "allowed_user_ids": [],
+            "notify_services": [],
+            "notify_on_approved": True,
+            "notify_on_denied": True,
+            "allowed_countries": [],
+            "allow_private_networks": False,
+            "user_redirect_paths": {human.id: "/tv-dashboard"},
+        },
+        headers={"Origin": _origin(client)},
+    )
+
+    assert response.status == 200
+    assert captured["user_redirect_paths"] == {human.id: "/tv-dashboard"}
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        "https://example.com",
+        "//example.com/path",
+        "\\\\example.com",
+        "/secure_qr_login/start",
+        "/secure_qr_login/approve?session=x",
+    ),
+)
+async def test_admin_settings_rejects_unsafe_user_redirect(
+    hass,
+    hass_client,
+    qr_manager,
+    path,
+) -> None:
+    """Configured destinations cannot escape the HA origin or loop auth."""
+    users = await hass.auth.async_get_users()
+    human = next(user for user in users if user.is_active and not user.system_generated)
+    client = await hass_client()
+
+    response = await client.post(
+        "/api/secure_qr_login/admin/settings",
+        json={
+            "enable_window_seconds": 180,
+            "qr_lifetime_seconds": 10,
+            "max_pending_sessions": 3,
+            "history_limit": 100,
+            "allowed_user_ids": [],
+            "notify_services": [],
+            "notify_on_approved": True,
+            "notify_on_denied": True,
+            "allowed_countries": [],
+            "allow_private_networks": False,
+            "user_redirect_paths": {human.id: path},
+        },
+        headers={"Origin": _origin(client)},
+    )
+
+    assert response.status == 400
+    assert (await response.json())["error"] == "invalid_settings"
