@@ -312,7 +312,7 @@
     if (stored && stored.access_token) {
       tokenIsValid(stored.access_token, function (valid) {
         if (valid) {
-          callback(true);
+          callback(true, stored.access_token);
           return;
         }
         checkRefresh();
@@ -328,7 +328,7 @@
           if (refreshed && refreshed.access_token) {
             tokenIsValid(refreshed.access_token, function (valid) {
               if (valid) {
-                callback(true);
+                callback(true, refreshed.access_token);
                 return;
               }
               checkCompanion();
@@ -346,23 +346,62 @@
     function checkCompanion() {
       requestExternalAuth(function (tokens) {
         if (!tokens || !tokens.access_token) {
-          callback(false);
+          callback(false, null);
           return;
         }
 
         tokenIsValid(tokens.access_token, function (valid) {
-          callback(Boolean(valid));
+          callback(Boolean(valid), valid ? tokens.access_token : null);
         });
       });
     }
   }
 
-  function redirectToHome() {
+  function safeRedirectPath(value) {
+    if (
+      typeof value !== 'string'
+      || value.charAt(0) !== '/'
+      || value.indexOf('//') === 0
+      || value.indexOf('\\') !== -1
+    ) {
+      return '/';
+    }
+    return value;
+  }
+
+  function redirectToDestination(accessToken) {
     clearInterval(qrTimer);
     clearInterval(pollTimer);
     state.className = 'ok';
     state.textContent = 'Already signed in. Opening Home Assistant...';
-    window.location.replace('/');
+
+    if (!accessToken) {
+      window.location.replace('/');
+      return;
+    }
+
+    request(
+      'GET',
+      '/api/secure_qr_login/destination',
+      null,
+      {'Authorization': 'Bearer ' + accessToken},
+      function (err, xhr) {
+        var data;
+        var destination = '/';
+
+        if (
+          !err
+          && xhr
+          && xhr.status >= 200
+          && xhr.status < 300
+        ) {
+          data = parseJson(xhr.responseText);
+          destination = safeRedirectPath(data.redirect_path || '/');
+        }
+
+        window.location.replace(destination);
+      }
+    );
   }
 
   function fail(text) {
@@ -516,7 +555,9 @@
       state.className = 'ok';
       state.textContent = 'Approved. Opening Home Assistant...';
       setTimeout(function () {
-        window.location.replace('/');
+        window.location.replace(
+          safeRedirectPath(data.redirect_path || '/')
+        );
       }, 500);
     });
   }
@@ -557,9 +598,9 @@
   function init() {
     state.textContent = 'Checking existing Home Assistant session...';
 
-    alreadyAuthenticated(function (authenticated) {
+    alreadyAuthenticated(function (authenticated, accessToken) {
       if (authenticated) {
-        redirectToHome();
+        redirectToDestination(accessToken);
         return;
       }
       beginLogin();
