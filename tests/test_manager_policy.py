@@ -195,3 +195,19 @@ async def test_nabu_casa_public_client_ip_uses_local_geoip(
 def test_invalid_country_codes_are_not_loaded_into_policy() -> None:
     manager = manager_with({"allowed_countries": ["GR", "ZZ", "gr"]})
     assert manager.allowed_countries == {"GR"}
+
+
+def test_user_redirect_defaults_to_home() -> None:
+    manager = manager_with({})
+    assert manager.redirect_path_for_user("user-1") == "/"
+
+
+def test_user_redirect_returns_configured_internal_path() -> None:
+    manager = manager_with({
+        "user_redirect_paths": {
+            "tv-user": "/tv-dashboard",
+            "other": "/dashboard-main/home",
+        }
+    })
+    assert manager.redirect_path_for_user("tv-user") == "/tv-dashboard"
+    assert manager.redirect_path_for_user("missing") == "/"
