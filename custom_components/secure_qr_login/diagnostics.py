@@ -63,5 +63,6 @@ def _safe_options(options: dict[str, Any]) -> dict[str, Any]:
         "notify_on_denied": options.get("notify_on_denied", True),
         "allowed_country_count": len(options.get("allowed_countries", [])),
         "allow_private_networks": options.get("allow_private_networks", False),
+        "user_redirect_count": len(options.get("user_redirect_paths", {})),
         "geoip_source": "home_assistant_client_ip_local_database",
     }
