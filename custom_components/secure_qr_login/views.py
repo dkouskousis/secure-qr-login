@@ -245,6 +245,11 @@ def _valid_internal_redirect_path(value: str) -> bool:
         return False
     if any(ord(char) < 32 or ord(char) == 127 for char in value):
         return False
+    if value.split("?", 1)[0].split("#", 1)[0] in {
+        "/secure_qr_login/start",
+        "/secure_qr_login/approve",
+    }:
+        return False
     return True
 
 
