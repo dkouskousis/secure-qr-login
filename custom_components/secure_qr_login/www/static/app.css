@@ -160,3 +160,12 @@ code{background:var(--panel-3);border-radius:5px;padding:2px 5px}
   background:var(--bg);
 }
 :host *{box-sizing:border-box}
+
+.redirect-section{margin-top:20px;padding-top:18px;border-top:1px solid var(--border-soft)}
+.redirect-section h3{margin:5px 0 4px;font-size:18px}
+.redirect-section p{margin:0 0 14px}
+.redirect-list{display:grid;gap:10px}
+.redirect-row{display:grid;grid-template-columns:minmax(140px,.45fr) minmax(0,1fr);align-items:center;gap:12px}
+.redirect-user{font-weight:750;color:var(--text)}
+.redirect-row input{width:100%;border:1px solid var(--border);background:var(--panel-2);color:var(--text);border-radius:11px;padding:11px 12px}
+@media(max-width:680px){.redirect-row{grid-template-columns:1fr;gap:6px}}
