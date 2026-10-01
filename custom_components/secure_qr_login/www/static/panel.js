@@ -118,6 +118,12 @@ class SecureQrLoginPanel extends HTMLElement {
                   <label class="toggle-row"><span><strong>Approved login notification</strong></span><input id="settingNotifyApproved" type="checkbox"></label>
                   <label class="toggle-row"><span><strong>Denied login notification</strong></span><input id="settingNotifyDenied" type="checkbox"></label>
                 </div>
+                <div class="redirect-section">
+                  <div class="section-kicker">Post-login destination</div>
+                  <h3>User destinations</h3>
+                  <p class="muted">Optional internal Home Assistant path for each user. Leave blank to open Home Assistant normally.</p>
+                  <div id="redirectUsers" class="redirect-list"></div>
+                </div>
               </article>
 
               <article class="surface-card">
@@ -275,6 +281,7 @@ class SecureQrLoginPanel extends HTMLElement {
       this._fillSelect(this._q('settingUsers'), d.users, v.allowed_user_ids, 'user');
       this._fillSelect(this._q('settingNotify'), d.notify_services, v.notify_services, 'notify');
       this._fillSelect(this._q('settingCountries'), d.country_codes, v.allowed_countries, 'country');
+      this._renderRedirectUsers(d.users || [], v.user_redirect_paths || {});
 
       const geo = d.geoip || {};
       const release = geo.local_database_release ? `Database: ${geo.local_database_release}` : 'Database not loaded';
@@ -297,6 +304,44 @@ class SecureQrLoginPanel extends HTMLElement {
     return Array.from(this._q(id).selectedOptions).map((o) => o.value);
   }
 
+  _renderRedirectUsers(users, redirects) {
+    const container = this._q('redirectUsers');
+    container.replaceChildren();
+
+    for (const user of users) {
+      const row = document.createElement('label');
+      row.className = 'redirect-row';
+
+      const name = document.createElement('span');
+      name.className = 'redirect-user';
+      name.textContent = user.name;
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = '/';
+      input.value = redirects[user.id] || '';
+      input.dataset.userId = user.id;
+      input.autocomplete = 'off';
+      input.spellcheck = false;
+
+      row.append(name, input);
+      container.append(row);
+    }
+  }
+
+  _redirectPaths() {
+    const result = {};
+    const inputs = this._q('redirectUsers').querySelectorAll('input[data-user-id]');
+
+    for (const input of inputs) {
+      const path = input.value.trim();
+      if (path) {
+        result[input.dataset.userId] = path;
+      }
+    }
+    return result;
+  }
+
   async _saveSettings() {
     const button = this._q('saveSettings');
     const message = this._q('settingsMessage');
@@ -314,7 +359,8 @@ class SecureQrLoginPanel extends HTMLElement {
         notify_on_approved: this._q('settingNotifyApproved').checked,
         notify_on_denied: this._q('settingNotifyDenied').checked,
         allowed_countries: this._selected('settingCountries'),
-        allow_private_networks: this._q('settingPrivate').checked
+        allow_private_networks: this._q('settingPrivate').checked,
+        user_redirect_paths: this._redirectPaths()
       });
       message.className = 'notice ok';
       message.textContent = 'Settings saved.';
