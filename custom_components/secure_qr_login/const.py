@@ -18,6 +18,7 @@ CONF_NOTIFY_ON_APPROVED = "notify_on_approved"
 CONF_NOTIFY_ON_DENIED = "notify_on_denied"
 CONF_ALLOWED_COUNTRIES = "allowed_countries"
 CONF_ALLOW_PRIVATE_NETWORKS = "allow_private_networks"
+CONF_USER_REDIRECT_PATHS = "user_redirect_paths"
 
 # Secure defaults.
 DEFAULT_ENABLE_WINDOW_SECONDS = 180
@@ -30,6 +31,7 @@ DEFAULT_NOTIFY_ON_APPROVED = True
 DEFAULT_NOTIFY_ON_DENIED = True
 DEFAULT_ALLOWED_COUNTRIES: list[str] = []
 DEFAULT_ALLOW_PRIVATE_NETWORKS = False
+DEFAULT_USER_REDIRECT_PATHS: dict[str, str] = {}
 
 # Deliberately conservative configurable bounds.
 MIN_ENABLE_WINDOW_SECONDS = 60
